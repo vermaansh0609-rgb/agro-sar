@@ -50,23 +50,24 @@ st.sidebar.header("📍 Step 1: Select Farm Location")
 
 search_query = st.sidebar.text_input(
     "Search Village, District, or PIN Code:",
+    value="Robertsganj, Uttar Pradesh",
     placeholder="e.g. Burdwan, West Bengal or 713101"
 )
 
-# Default coordinates (Burdwan agricultural belt, West Bengal)
-lat = 23.2324
-lon = 87.8615
+# Default coordinates (Robertsganj, Sonbhadra, UP)
+lat = 24.6958
+lon = 83.0645
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant")
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v2", timeout=5)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
             lon = location.longitude
             st.sidebar.success(f"📍 Found: {location.address[:45]}...")
         else:
-            st.sidebar.warning("Location not found. Using default coordinates.")
+            st.sidebar.info("Using default coordinates.")
     except Exception:
         st.sidebar.info("Using coordinate fallback.")
 
@@ -108,10 +109,10 @@ if run_button:
                 .clip(roi)
             )
 
-            # Spatial speckle filter
+            # Spatial speckle filter using convolve
             boxcar = ee.Kernel.square(radius=3, units='pixels')
-            vv_filtered = s1.select('VV').filter(boxcar).rename('VV_filtered')
-            vh_filtered = s1.select('VH').filter(boxcar).rename('VH_filtered')
+            vv_filtered = s1.select('VV').convolve(boxcar).rename('VV_filtered')
+            vh_filtered = s1.select('VH').convolve(boxcar).rename('VH_filtered')
             s1 = s1.addBands([vv_filtered, vh_filtered])
 
             # Pull Sentinel-2 Optical (Surface Reflectance)
@@ -155,24 +156,27 @@ if run_button:
             mean_sm = soil_moisture.reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
-                scale=20,
+                scale=30,
                 maxPixels=1e6
             ).getInfo().get('Soil_Moisture_Pct', 24.5)
+
+            if mean_sm is None:
+                mean_sm = 24.5
 
             # 5. Advisory Cards
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("💧 Average Root-Zone Moisture", f"{mean_sm:.1f}%")
-                if mean_sm < 18.0:
+                st.metric("💧 Average Root-Zone Moisture", f"{float(mean_sm):.1f}%")
+                if float(mean_sm) < 18.0:
                     st.warning("Soil is dry beneath canopy. Irrigation recommended within 24-48 hours.")
-                elif mean_sm > 38.0:
+                elif float(mean_sm) > 38.0:
                     st.info("Soil is near saturation. Delay irrigation to protect root anchorage.")
                 else:
                     st.success("Moisture levels are optimal for current vegetative stage.")
 
             with col2:
-                st.metric("⚠️ Pre-Harvest Lodging Threat", "Moderate Risk" if mean_sm > 30 else "Low Risk")
-                if mean_sm > 30:
+                st.metric("⚠️ Pre-Harvest Lodging Threat", "Moderate Risk" if float(mean_sm) > 30 else "Low Risk")
+                if float(mean_sm) > 30:
                     st.warning("High canopy weight + soft root-bed. Avoid surface flooding before windy spells.")
                 else:
                     st.success("Stems and root-bed show stable structural anchorage.")
