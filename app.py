@@ -22,12 +22,13 @@ def authenticate_gee():
             service_account_info["client_email"],
             key_data=json.dumps(service_account_info)
         )
-        ee.Initialize(credentials)
-        return True
+        project_id = service_account_info.get("project_id", "neon-trilogy-386710")
+        ee.Initialize(credentials, project=project_id)
+        return True, None
     except Exception as e:
-        return False
+        return False, str(e)
 
-gee_ready = authenticate_gee()
+gee_ready, auth_error = authenticate_gee()
 
 # Helper function: Convert any Earth Engine Image into a Folium Tile Layer
 def add_ee_layer(m, ee_image_object, vis_params, name):
@@ -89,7 +90,7 @@ run_button = st.sidebar.button("🔍 Scan Farm with Satellite Radar", type="prim
 # 4. Processing Pipeline
 if run_button:
     if not gee_ready:
-        st.error("⚠️ Earth Engine authentication failed. Please verify that your GEE_SERVICE_ACCOUNT Secret is configured correctly in Streamlit Settings.")
+        st.error(f"⚠️ Earth Engine authentication failed: {auth_error}")
     else:
         with st.spinner("🛰️ Retrieving Sentinel-1 C-Band SAR and Sentinel-2 optical data from orbit..."):
             point = ee.Geometry.Point([lon, lat])
