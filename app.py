@@ -70,7 +70,7 @@ lon = 76.4880
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v5", timeout=5)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v6", timeout=5)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -176,7 +176,6 @@ if st.session_state["scan_performed"]:
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
             # Pre-harvest lodging vulnerability index: (VV - VH) * NDVI
-            # High canopy weight + soft surface = high risk values (> 3.5)
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
             lodging_risk = depol_ratio.multiply(ndvi).rename('Lodging_Risk_Index')
 
@@ -211,7 +210,6 @@ if st.session_state["scan_performed"]:
                 st.success("✅ Optimal Root-Zone: Moisture levels (16–35%) maintain favorable hydraulic conductivity.")
 
         with col2:
-            # Lodging Risk classification using actual radar lodging index
             if mean_lodging >= 4.0 or (mean_lodging >= 3.2 and mean_sm > 30.0):
                 st.metric("⚠️ Pre-Harvest Lodging Threat", "HIGH RISK", delta="Stem Lodging Alert", delta_color="inverse")
                 st.error("🚨 Critical Lodging Threat: Heavy canopy weight over weakened/soft rootbed. Wind or flood events risk severe crop flattening.")
@@ -224,6 +222,28 @@ if st.session_state["scan_performed"]:
 
         # 6. Interactive Folium Map
         st.subheader("🗺️ 10-Meter Sub-Canopy Radar Heatmap")
+        
+        # Injected CSS to prevent layer control text truncation
+        st.markdown(
+            """
+            <style>
+            .leaflet-control-layers {
+                font-family: inherit !important;
+                font-size: 13px !important;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
+                border-radius: 8px !important;
+                padding: 10px 14px !important;
+                margin-right: 18px !important;
+                max-width: 260px !important;
+            }
+            .leaflet-control-layers label {
+                margin-bottom: 4px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
         m = folium.Map(location=[c_lat, c_lon], zoom_start=13, tiles="OpenStreetMap")
 
         sm_vis = {
@@ -245,13 +265,15 @@ if st.session_state["scan_performed"]:
             "palette": ["#8c510a", "#ffffbf", "#1b7837"]
         }
 
-        # Sub-Canopy Soil Moisture is displayed by default (show=True)
-        add_ee_layer(m, soil_moisture, sm_vis, "Sub-Canopy Soil Moisture (%)", show=True)
-        add_ee_layer(m, lodging_risk, lodging_vis, "Pre-Harvest Lodging Risk", show=True)
+        # Add layers with Soil Moisture pre-checked and NDVI unchecked by default
+        add_ee_layer(m, soil_moisture, sm_vis, "Soil Moisture (%)", show=True)
+        add_ee_layer(m, lodging_risk, lodging_vis, "Lodging Risk Index", show=False)
         add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)", show=False)
 
-        folium.LayerControl(collapsed=False).add_to(m)
-        st_folium(m, width=950, height=550, returned_objects=[])
+        folium.LayerControl(position="topright", collapsed=False).add_to(m)
+
+        # Responsive full container width
+        st_folium(m, use_container_width=True, height=520, returned_objects=[])
 
 else:
     st.info("👈 Enter your village name or PIN code in the sidebar and click **Scan Farm with Satellite Radar** to begin.")
