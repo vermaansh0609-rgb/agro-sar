@@ -257,7 +257,7 @@ page = st.sidebar.radio(
     index=1 if st.session_state["scan_performed"] else 0
 )
 
-# EXACT Top Header (Unchanged)
+# Global Top Header
 st.markdown('<div class="hud-title">🛰️ AGROSAR | ORBITAL MISSION CONTROL</div>', unsafe_allow_html=True)
 st.markdown('<div class="hud-sub">CYBER-PHYSICAL SUB-CANOPY RADAR INVERSION & CLOSED-LOOP ACTUATION PORTAL</div>', unsafe_allow_html=True)
 
@@ -270,7 +270,7 @@ crop_params = {
 res = st.session_state["scan_results"]
 
 # ==============================================================================
-# PAGE 1: MISSION BRIEFING & SYSTEM ARCHITECTURE (Unchanged)
+# PAGE 1: MISSION BRIEFING & SYSTEM ARCHITECTURE
 # ==============================================================================
 if page == "🚀 Mission Briefing & Guide":
     st.markdown(
@@ -687,7 +687,6 @@ elif page == "⚡ Actuation Protocol (VRI)":
             """
             <div class="mission-box">
                 <h3 style="color: #00f0ff; margin-top:0;">⚡ Cyber-Physical Machine Actuation Console</h3>
-                <p>Patent Eligibility Technical Effect: Translates spaceborne SAR backscatter and atmospheric drag into real-time <strong>ISO 11783-10 (ISOBUS)</strong> machine control vectors.</p>
             </div>
             """,
             unsafe_allow_html=True
