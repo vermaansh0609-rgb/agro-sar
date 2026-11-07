@@ -71,7 +71,7 @@ lon = 88.3639
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step4", timeout=4)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step5", timeout=4)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -191,7 +191,7 @@ if st.session_state["scan_performed"]:
             lodging_risk = depol_ratio.multiply(canopy_drag).multiply(soil_softness).rename('Lodging_Risk_Index')
 
             # Fast regional zonal statistics
-            stats = soil_moisture.addBands(lodging_risk).addBands(wind_speed).addBands(roughness_factor).reduceRegion(
+            stats = soil_moisture.addBands(lodging_risk).addBands(wind_speed).addBands(roughness_factor).addBands(ndvi).reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
                 scale=120,
@@ -203,6 +203,7 @@ if st.session_state["scan_performed"]:
             mean_lodging = float(stats.get('Lodging_Risk_Index') or 2.8)
             mean_wind_kmh = float(stats.get('Wind_Speed_MPS') or 3.2) * 3.6
             mean_roughness = float(stats.get('Roughness_Index') or 1.15)
+            mean_ndvi = float(stats.get('NDVI') or 0.58)
 
         # 5. Advisory Cards: 4 Diagnostic Metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -393,6 +394,65 @@ if st.session_state["scan_performed"]:
                 data=json.dumps(telemetry_payload, indent=2),
                 file_name=f"AgroSAR_VRI_Telemetry_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
                 mime="application/json",
+                use_container_width=True
+            )
+
+        # 8. Step 5 Feature: 1-Click Field Audit Report Export
+        st.markdown("---")
+        st.subheader("📋 Comprehensive Agronomic Field Audit Report")
+        
+        # Build structured markdown report
+        report_timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        audit_text = f"""# AGROSAR SPACEBORNE AUDIT & BIOPHYSICAL PROGNOSTIC REPORT
+Generated: {report_timestamp}
+System: AgroSAR Cyber-Physical Earth Observation Engine
+Satellites: ESA Sentinel-1 C-SAR (10m) | ESA Sentinel-2 MSI | ECMWF ERA5-Land Reanalysis
+
+--------------------------------------------------------------------------------
+1. TARGET SCAN SUMMARY
+--------------------------------------------------------------------------------
+• Location Coordinates : Lat {c_lat:.4f}, Lon {c_lon:.4f}
+• Scan Radius          : {c_buffer} km
+• Crop Phenology       : {c_crop}
+• Surface Greenness    : NDVI {mean_ndvi:.2f}
+
+--------------------------------------------------------------------------------
+2. SUB-CANOPY RADAR INVERSION (WATER CLOUD MODEL)
+--------------------------------------------------------------------------------
+• Inverted Root-Zone Moisture : {mean_sm:.2f}% Volumetric Water Content
+• Dynamic Roughness Factor    : {mean_roughness:.2f} (Cross-Pol Decoupled)
+• Hydraulic Classification    : {"Waterlogged / Saturated" if mean_sm > 35 else ("Moisture Deficit (Irrigation Required)" if mean_sm < 16 else "Optimal Hydraulic Conductivity")}
+
+--------------------------------------------------------------------------------
+3. BIOMECHANICAL LODGING PROGNOSTICS
+--------------------------------------------------------------------------------
+• Atmospheric Wind Vector     : {mean_wind_kmh:.1f} km/h (ECMWF 10m Reanalysis)
+• Lodging Risk Index Score    : {mean_lodging:.2f}
+• Structural Vulnerability    : {lodging_label}
+• Agronomic Directive         : {"Halt all canal irrigation and nitrogen application. Clear drainage channels to prevent stalk toppling." if lodging_label == "HIGH RISK" else "Stalk elasticity and root anchorage are structurally sound under current atmospheric load."}
+
+--------------------------------------------------------------------------------
+4. AUTONOMOUS ACTUATION TELEMETRY (ISOBUS ISO 11783-10)
+--------------------------------------------------------------------------------
+• Actuation Mode              : {valve_command}
+• Prescribed Solenoid Duty    : {duty_cycle}%
+• Target Irrigation Depth     : {app_depth_mm} mm
+• Hydraulic Lockout Override  : {lockout}
+
+--------------------------------------------------------------------------------
+AgroSAR Prognostics Engine — Spaceborne Precision Hydrology System
+"""
+
+        rep_col1, rep_col2 = st.columns([2, 1])
+        with rep_col1:
+            st.info("💡 **Ready for Insurance & Agronomic Compliance:** This formal audit log summarizes spaceborne radar backscatter, roughness decoupling, wind vectors, and machine actuation directives for field inspectors.")
+        with rep_col2:
+            st.download_button(
+                label="📄 Download Official Field Audit Report (TXT)",
+                data=audit_text,
+                file_name=f"AgroSAR_Audit_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                mime="text/plain",
+                type="primary",
                 use_container_width=True
             )
 
