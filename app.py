@@ -71,7 +71,7 @@ lon = 76.4880
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step1_v2", timeout=4)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step2", timeout=4)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -90,11 +90,11 @@ crop_type = st.sidebar.selectbox(
     ["Paddy / Rice (धान)", "Wheat (गेहूँ)", "Maize (मक्का)"]
 )
 
-# Biophysical scattering and mechanical height parameters
+# Biophysical scattering, mechanical height, and roughness attenuation constants
 crop_params = {
-    "Paddy / Rice (धान)": {"A": 0.0014, "B": 0.145, "stalk_height_m": 0.95},
-    "Wheat (गेहूँ)": {"A": 0.0011, "B": 0.125, "stalk_height_m": 0.85},
-    "Maize (मक्का)": {"A": 0.0022, "B": 0.180, "stalk_height_m": 2.10}
+    "Paddy / Rice (धान)": {"A": 0.0014, "B": 0.145, "stalk_height_m": 0.95, "roughness_weight": 0.14},
+    "Wheat (गेहूँ)": {"A": 0.0011, "B": 0.125, "stalk_height_m": 0.85, "roughness_weight": 0.10},
+    "Maize (मक्का)": {"A": 0.0022, "B": 0.180, "stalk_height_m": 2.10, "roughness_weight": 0.18}
 }
 
 if st.sidebar.button("🔍 Scan Farm with Satellite Radar", type="primary"):
@@ -117,7 +117,7 @@ if st.session_state["scan_performed"]:
         c_buffer = params["buffer_km"]
         c_crop = params["crop_type"]
 
-        with st.spinner("⚡ Retrieving Sentinel SAR, Optical, and ECMWF ERA5 wind data..."):
+        with st.spinner("⚡ Decoupling surface roughness and inverting radar backscatter..."):
             point = ee.Geometry.Point([c_lon, c_lat])
             roi = point.buffer(c_buffer * 1000)
 
@@ -149,13 +149,12 @@ if st.session_state["scan_performed"]:
             s2 = s2_coll.median().clip(roi)
             ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI').clamp(0.0, 1.0)
 
-            # 3. High-Speed ERA5 Wind Ingestion (Bounded to fast recent slice)
+            # 3. High-Speed ERA5 Wind Ingestion
             era5_coll = (
                 ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
                 .filterBounds(roi)
                 .limit(1)
             )
-            default_wind = ee.Image.constant(3.5).rename('Wind_Speed_MPS')
             era5_img = ee.Image(ee.Algorithms.If(
                 era5_coll.size().gt(0),
                 era5_coll.first(),
@@ -166,28 +165,36 @@ if st.session_state["scan_performed"]:
             v_wind = era5_img.select('v_component_of_wind_10m')
             wind_speed = (u_wind.pow(2).add(v_wind.pow(2))).sqrt().rename('Wind_Speed_MPS').clip(roi)
 
-            # 4. Water Cloud Model Inversion
+            # 4. Roughness-Decoupled Water Cloud Model Inversion
             A = crop_params[c_crop]["A"]
             B = crop_params[c_crop]["B"]
+            r_weight = crop_params[c_crop]["roughness_weight"]
 
             sigma_vv_linear = ee.Image(10.0).pow(s1.select('VV_filtered').divide(10.0))
             theta_rad = s1.select('angle').multiply(3.14159265 / 180.0)
             cos_theta = theta_rad.cos()
 
+            # Dynamic Surface Roughness estimation: Cross-polarization ratio decoupling
+            cross_ratio = s1.select('VH_filtered').divide(s1.select('VV_filtered')).abs()
+            roughness_factor = cross_ratio.multiply(r_weight).add(1.0).rename('Roughness_Index')
+
+            # Canopy attenuation and decoupled soil backscatter
             tau_sq = ndvi.multiply(-2.0 * B).divide(cos_theta).exp()
             sigma_veg = ndvi.multiply(A).multiply(cos_theta).multiply(ee.Image(1.0).subtract(tau_sq))
-            sigma_soil_linear = sigma_vv_linear.subtract(sigma_veg).divide(tau_sq)
+            sigma_soil_linear = sigma_vv_linear.subtract(sigma_veg).divide(tau_sq).divide(roughness_factor)
             sigma_soil_db = sigma_soil_linear.log10().multiply(10.0)
 
+            # Volumetric soil moisture (% VWC)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # 5. Coupled Mechanical Lodging Risk: (VV - VH) * Canopy Height * Wind Speed
+            # 5. Coupled Mechanical Lodging Risk
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
             canopy_drag = ndvi.multiply(crop_params[c_crop]["stalk_height_m"]).multiply(wind_speed)
-            lodging_risk = depol_ratio.multiply(canopy_drag).rename('Lodging_Risk_Index')
+            soil_softness = soil_moisture.divide(35.0).clamp(0.6, 2.0)
+            lodging_risk = depol_ratio.multiply(canopy_drag).multiply(soil_softness).rename('Lodging_Risk_Index')
 
-            # Fast regional zonal statistics (scale=120 runs in <1 second)
-            stats = soil_moisture.addBands(lodging_risk).addBands(wind_speed).reduceRegion(
+            # Fast regional zonal statistics
+            stats = soil_moisture.addBands(lodging_risk).addBands(wind_speed).addBands(roughness_factor).reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
                 scale=120,
@@ -198,11 +205,12 @@ if st.session_state["scan_performed"]:
             mean_sm = float(stats.get('Soil_Moisture_Pct') or 24.5)
             mean_lodging = float(stats.get('Lodging_Risk_Index') or 2.8)
             mean_wind_kmh = float(stats.get('Wind_Speed_MPS') or 3.2) * 3.6
+            mean_roughness = float(stats.get('Roughness_Index') or 1.15)
 
-        # 5. Advisory Cards: 3 Columns
-        col1, col2, col3 = st.columns(3)
+        # 5. Advisory Cards: 4 Diagnostic Metrics
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("💧 Root-Zone Moisture", f"{mean_sm:.1f}%")
+            st.metric("💧 Decoupled Root Moisture", f"{mean_sm:.1f}%")
             if mean_sm < 16.0:
                 st.warning("Soil deficit: Root dehydration risk; deep irrigation needed.")
             elif mean_sm > 35.0:
@@ -211,17 +219,24 @@ if st.session_state["scan_performed"]:
                 st.success("Optimal: Favorable hydraulic conductivity.")
 
         with col2:
+            st.metric("🪨 Soil Roughness Factor", f"{mean_roughness:.2f}", help="Cross-pol decoupled roughness coefficient")
+            if mean_roughness > 1.25:
+                st.info("Plowed / High Tilth: Heavy micro-topography filtered.")
+            else:
+                st.success("Smooth Seedbed: Minimal roughness interference.")
+
+        with col3:
             st.metric("🌬️ ERA5 Surface Wind", f"{mean_wind_kmh:.1f} km/h")
             if mean_wind_kmh > 25.0:
                 st.warning("High aerodynamic drag on standing stalks.")
             else:
-                st.success("Gentle breeze: Minimal mechanical shear stress.")
+                st.success("Gentle breeze: Minimal shear stress.")
 
-        with col3:
-            if mean_lodging >= 3.5 or (mean_lodging >= 2.6 and mean_wind_kmh > 22.0):
+        with col4:
+            if mean_lodging >= 3.8 or (mean_lodging >= 2.6 and mean_wind_kmh > 22.0):
                 st.metric("⚠️ Lodging Threat", "HIGH RISK")
                 st.error("Severe toppling risk: High canopy drag on saturated soil.")
-            elif mean_lodging >= 2.0:
+            elif mean_lodging >= 2.2:
                 st.metric("⚠️ Lodging Threat", "Moderate Risk")
                 st.warning("Moderate vulnerability: Dense vegetative cover.")
             else:
