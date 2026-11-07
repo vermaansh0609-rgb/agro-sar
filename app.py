@@ -6,12 +6,14 @@ from geopy.geocoders import Nominatim
 import json
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
+import streamlit.components.v1 as components
 
 # Page configuration
 st.set_page_config(
-    page_title="AgroSAR | Sub-Canopy Radar & Lodging Prognostics",
-    page_icon="🌾",
-    layout="wide"
+    page_title="AgroSAR | Orbital Radar Mission Control",
+    page_icon="🛰️",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # 1. Earth Engine Authentication via Streamlit Secrets
@@ -32,6 +34,157 @@ def authenticate_gee():
 
 gee_ready, auth_error = authenticate_gee()
 
+# 2. Orbital Mission Control HUD Stylesheet
+st.markdown(
+    """
+    <style>
+    /* Global Base */
+    .stApp {
+        background-color: #0a0e17 !important;
+        color: #e2e8f0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", monospace;
+    }
+    
+    /* Top title styling */
+    .hud-title {
+        font-size: 2.1rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        background: linear-gradient(90deg, #00f0ff 0%, #00ff9d 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 2px;
+    }
+    
+    .hud-sub {
+        font-size: 0.88rem;
+        color: #64748b;
+        font-family: monospace;
+        letter-spacing: 0.05em;
+        margin-bottom: 20px;
+    }
+
+    /* Mission Control Custom Metric Cards (Prevents Any Truncation) */
+    .hud-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 24px;
+    }
+    
+    @media (max-width: 900px) {
+        .hud-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    
+    @media (max-width: 500px) {
+        .hud-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .hud-card {
+        background: rgba(15, 23, 42, 0.75);
+        border: 1px solid rgba(0, 240, 255, 0.22);
+        border-radius: 10px;
+        padding: 16px 14px;
+        position: relative;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(12px);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 155px;
+    }
+
+    .hud-card::before {
+        content: "";
+        position: absolute;
+        top: -1px; left: -1px;
+        width: 8px; height: 8px;
+        border-top: 2px solid #00f0ff;
+        border-left: 2px solid #00f0ff;
+    }
+
+    .hud-card::after {
+        content: "";
+        position: absolute;
+        bottom: -1px; right: -1px;
+        width: 8px; height: 8px;
+        border-bottom: 2px solid #00ff9d;
+        border-right: 2px solid #00ff9d;
+    }
+
+    .hud-card-label {
+        font-size: 0.78rem;
+        font-family: monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .hud-card-value {
+        font-size: 1.85rem;
+        font-weight: 800;
+        color: #ffffff;
+        margin: 6px 0;
+        line-height: 1.15;
+        white-space: normal;
+        word-break: break-word;
+    }
+
+    .hud-pill {
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 0.74rem;
+        line-height: 1.35;
+        font-weight: 500;
+        white-space: normal;
+        word-break: break-word;
+    }
+    
+    .pill-green {
+        background: rgba(0, 255, 157, 0.12);
+        border: 1px solid rgba(0, 255, 157, 0.35);
+        color: #00ff9d;
+    }
+    
+    .pill-amber {
+        background: rgba(255, 183, 3, 0.12);
+        border: 1px solid rgba(255, 183, 3, 0.35);
+        color: #ffb703;
+    }
+
+    .pill-red {
+        background: rgba(255, 59, 92, 0.15);
+        border: 1px solid rgba(255, 59, 92, 0.45);
+        color: #ff3b5c;
+    }
+
+    .pill-blue {
+        background: rgba(0, 240, 255, 0.12);
+        border: 1px solid rgba(0, 240, 255, 0.35);
+        color: #00f0ff;
+    }
+
+    /* Glass Container */
+    .mission-box {
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        backdrop-filter: blur(10px);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # Helper function: Add GEE layer to Folium cleanly
 def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
     try:
@@ -47,21 +200,74 @@ def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
     except Exception as e:
         st.warning(f"Note on layer '{name}': {e}")
 
-# 2. Header
-st.title("🌾 AgroSAR: Spaceborne Sub-Canopy Soil Radar & Lodging Prognostics")
-st.caption("Powered by ESA Sentinel-1 C-Band SAR, Sentinel-2 Optical & ECMWF ERA5-Land Reanalysis")
-
-# Initialize session state
+# Initialize session state storage
 if "scan_performed" not in st.session_state:
     st.session_state["scan_performed"] = False
-if "scan_params" not in st.session_state:
-    st.session_state["scan_params"] = None
+if "scan_results" not in st.session_state:
+    st.session_state["scan_results"] = None
+if "gps_coords" not in st.session_state:
+    st.session_state["gps_coords"] = None
 
-# 3. Sidebar
-st.sidebar.header("📍 Step 1: Select Farm Location")
+# Sidebar Navigation (Idea 2, 3, 4, 5)
+st.sidebar.markdown("### 🛰️ MISSION CONTROL")
+page = st.sidebar.radio(
+    "Navigation Portal:",
+    [
+        "🚀 Mission Briefing & Guide",
+        "🗺️ Radar Analysis Canvas",
+        "⚡ Actuation Protocol (VRI)",
+        "📋 Field Audit Report",
+        "👥 Project Innovators & Mentor"
+    ],
+    index=1 if st.session_state["scan_performed"] else 0
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("📍 Target Coordinate Uplink")
+
+# Real-Time GPS "Locate Me" Feature (Idea 6)
+with st.sidebar.expander("📡 Real-Time Ground GPS (Locate Me)", expanded=False):
+    st.caption("Acquire field coordinates directly from your mobile or browser device.")
+    gps_html = """
+    <div style="text-align: center;">
+        <button onclick="getLocation()" style="
+            background: linear-gradient(90deg, #00f0ff, #00ff9d);
+            border: none;
+            color: #0a0e17;
+            padding: 8px 14px;
+            font-weight: 700;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 0.85rem;
+        ">🎯 Ping Live Field GPS</button>
+        <p id="status" style="color: #64748b; font-size: 0.75rem; margin-top: 6px; font-family: monospace;"></p>
+    </div>
+    <script>
+    function getLocation() {
+        var status = document.getElementById('status');
+        if (navigator.geolocation) {
+            status.innerHTML = "Acquiring satellite lock...";
+            navigator.geolocation.getCurrentPosition(showPosition, showError, {enableHighAccuracy: true});
+        } else {
+            status.innerHTML = "Geolocation not supported.";
+        }
+    }
+    function showPosition(position) {
+        var lat = position.coords.latitude.toFixed(4);
+        var lon = position.coords.longitude.toFixed(4);
+        document.getElementById('status').innerHTML = "LOCKED: " + lat + ", " + lon;
+        window.parent.postMessage({type: "streamlit:setComponentValue", value: lat + "," + lon}, "*");
+    }
+    function showError(error) {
+        document.getElementById('status').innerHTML = "GPS Timeout / Denied.";
+    }
+    </script>
+    """
+    components.html(gps_html, height=85)
 
 search_query = st.sidebar.text_input(
-    "Search Village, District, or PIN Code:",
+    "Search Village, PIN or Area:",
     value="Kolkata",
     placeholder="e.g. Burdwan, West Bengal or 713101"
 )
@@ -71,57 +277,38 @@ lon = 88.3639
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step5", timeout=4)
+        geolocator = Nominatim(user_agent="agrosar_mission_control_v4", timeout=4)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
             lon = location.longitude
-            st.sidebar.success(f"📍 Found: {location.address[:45]}...")
-        else:
-            st.sidebar.info("Using default coordinates.")
+            st.sidebar.success(f"📍 Target: {location.address[:35]}...")
     except Exception:
-        st.sidebar.info("Using coordinate fallback.")
+        pass
 
-buffer_km = st.sidebar.slider("Farm Scan Radius (Kilometers):", min_value=2, max_value=12, value=5)
+buffer_km = st.sidebar.slider("Scan Radius (Kilometers):", min_value=2, max_value=12, value=5)
 
-st.sidebar.header("🌾 Step 2: Choose Crop Type")
+st.sidebar.header("🌾 Crop Biophysical Model")
 crop_type = st.sidebar.selectbox(
-    "Select Your Crop:",
+    "Select Target Phenology:",
     ["Paddy / Rice (धान)", "Wheat (गेहूँ)", "Maize (मक्का)"]
 )
 
-# Biophysical scattering, mechanical height, and roughness attenuation constants
 crop_params = {
     "Paddy / Rice (धान)": {"A": 0.0014, "B": 0.145, "stalk_height_m": 0.95, "roughness_weight": 0.14},
     "Wheat (गेहूँ)": {"A": 0.0011, "B": 0.125, "stalk_height_m": 0.85, "roughness_weight": 0.10},
     "Maize (मक्का)": {"A": 0.0022, "B": 0.180, "stalk_height_m": 2.10, "roughness_weight": 0.18}
 }
 
-if st.sidebar.button("🔍 Scan Farm with Satellite Radar", type="primary"):
-    st.session_state["scan_performed"] = True
-    st.session_state["scan_params"] = {
-        "lat": lat,
-        "lon": lon,
-        "buffer_km": buffer_km,
-        "crop_type": crop_type
-    }
+if st.sidebar.button("🛰️ Initialize Spaceborne SAR Scan", type="primary"):
+    with st.spinner("⚡ Inverting C-band SAR backscatter, decoupling roughness & calculating wind drag..."):
+        if not gee_ready:
+            st.error(f"Earth Engine Authentication Failed: {auth_error}")
+        else:
+            point = ee.Geometry.Point([lon, lat])
+            roi = point.buffer(buffer_km * 1000)
 
-# 4. Processing Pipeline
-if st.session_state["scan_performed"]:
-    if not gee_ready:
-        st.error(f"⚠️ Earth Engine authentication failed: {auth_error}")
-    else:
-        params = st.session_state.get("scan_params", {"lat": lat, "lon": lon, "buffer_km": buffer_km, "crop_type": crop_type})
-        c_lat = params["lat"]
-        c_lon = params["lon"]
-        c_buffer = params["buffer_km"]
-        c_crop = params["crop_type"]
-
-        with st.spinner("⚡ Decoupling surface roughness and inverting radar backscatter..."):
-            point = ee.Geometry.Point([c_lon, c_lat])
-            roi = point.buffer(c_buffer * 1000)
-
-            # 1. Sentinel-1 SAR (IW mode, dual-polarization)
+            # Sentinel-1 SAR
             s1_coll = (
                 ee.ImageCollection('COPERNICUS/S1_GRD')
                 .filterBounds(roi)
@@ -132,13 +319,12 @@ if st.session_state["scan_performed"]:
                 .limit(5)
             )
             s1 = s1_coll.median().clip(roi)
-
             boxcar = ee.Kernel.square(radius=2, units='pixels')
             vv_filtered = s1.select('VV').convolve(boxcar).rename('VV_filtered')
             vh_filtered = s1.select('VH').convolve(boxcar).rename('VH_filtered')
             s1 = s1.addBands([vv_filtered, vh_filtered])
 
-            # 2. Sentinel-2 Optical
+            # Sentinel-2 Optical
             s2_coll = (
                 ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                 .filterBounds(roi)
@@ -149,12 +335,8 @@ if st.session_state["scan_performed"]:
             s2 = s2_coll.median().clip(roi)
             ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI').clamp(0.0, 1.0)
 
-            # 3. High-Speed ERA5 Wind Ingestion
-            era5_coll = (
-                ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
-                .filterBounds(roi)
-                .limit(1)
-            )
+            # ECMWF ERA5-Land Hourly Wind
+            era5_coll = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY").filterBounds(roi).limit(1)
             era5_img = ee.Image(ee.Algorithms.If(
                 era5_coll.size().gt(0),
                 era5_coll.first(),
@@ -165,10 +347,10 @@ if st.session_state["scan_performed"]:
             v_wind = era5_img.select('v_component_of_wind_10m')
             wind_speed = (u_wind.pow(2).add(v_wind.pow(2))).sqrt().rename('Wind_Speed_MPS').clip(roi)
 
-            # 4. Roughness-Decoupled Water Cloud Model Inversion
-            A = crop_params[c_crop]["A"]
-            B = crop_params[c_crop]["B"]
-            r_weight = crop_params[c_crop]["roughness_weight"]
+            # Roughness Decoupled Water Cloud Inversion
+            A = crop_params[crop_type]["A"]
+            B = crop_params[crop_type]["B"]
+            r_weight = crop_params[crop_type]["roughness_weight"]
 
             sigma_vv_linear = ee.Image(10.0).pow(s1.select('VV_filtered').divide(10.0))
             theta_rad = s1.select('angle').multiply(3.14159265 / 180.0)
@@ -184,13 +366,12 @@ if st.session_state["scan_performed"]:
 
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # 5. Coupled Mechanical Lodging Risk
+            # Biomechanical Lodging Threat
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
-            canopy_drag = ndvi.multiply(crop_params[c_crop]["stalk_height_m"]).multiply(wind_speed)
+            canopy_drag = ndvi.multiply(crop_params[crop_type]["stalk_height_m"]).multiply(wind_speed)
             soil_softness = soil_moisture.divide(35.0).clamp(0.6, 2.0)
             lodging_risk = depol_ratio.multiply(canopy_drag).multiply(soil_softness).rename('Lodging_Risk_Index')
 
-            # Fast regional zonal statistics
             stats = soil_moisture.addBands(lodging_risk).addBands(wind_speed).addBands(roughness_factor).addBands(ndvi).reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
@@ -205,149 +386,15 @@ if st.session_state["scan_performed"]:
             mean_roughness = float(stats.get('Roughness_Index') or 1.15)
             mean_ndvi = float(stats.get('NDVI') or 0.58)
 
-        # 5. Advisory Cards: 4 Diagnostic Metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("💧 Decoupled Moisture", f"{mean_sm:.1f}%")
-            if mean_sm < 16.0:
-                st.warning("Soil deficit: Root dehydration risk; deep irrigation needed.")
-            elif mean_sm > 35.0:
-                st.info("Waterlogged: Root aeration reduced; suspend furrow irrigation.")
-            else:
-                st.success("Optimal: Favorable hydraulic conductivity.")
-
-        with col2:
-            st.metric("🪨 Roughness Factor", f"{mean_roughness:.2f}", help="Cross-pol decoupled roughness coefficient")
-            if mean_roughness > 1.25:
-                st.info("Plowed / High Tilth: Heavy micro-topography filtered.")
-            else:
-                st.success("Smooth Seedbed: Minimal roughness interference.")
-
-        with col3:
-            st.metric("🌬️ ERA5 Wind", f"{mean_wind_kmh:.1f} km/h")
-            if mean_wind_kmh > 25.0:
-                st.warning("High aerodynamic drag on standing stalks.")
-            else:
-                st.success("Gentle breeze: Minimal shear stress.")
-
-        with col4:
+            # Determine Lodging State
             if mean_lodging >= 3.8 or (mean_lodging >= 2.6 and mean_wind_kmh > 22.0):
                 lodging_label = "HIGH RISK"
-                st.metric("⚠️ Lodging Threat", lodging_label)
-                st.error("Severe toppling risk: High canopy drag on saturated soil.")
             elif mean_lodging >= 2.2:
                 lodging_label = "Moderate Risk"
-                st.metric("⚠️ Lodging Threat", lodging_label)
-                st.warning("Moderate vulnerability: Dense vegetative cover.")
             else:
                 lodging_label = "Low Risk"
-                st.metric("⚠️ Lodging Threat", lodging_label)
-                st.success("Stable: Stalks well-anchored in soil.")
 
-        # 6. Interactive Folium Map
-        st.subheader("🗺️ 10-Meter Sub-Canopy Radar Heatmap")
-
-        st.markdown(
-            """
-            <style>
-            .leaflet-control-layers {
-                font-family: inherit !important;
-                font-size: 13px !important;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-                border-radius: 8px !important;
-                padding: 10px 14px !important;
-                margin-right: 18px !important;
-                max-width: 260px !important;
-            }
-            .leaflet-control-layers label {
-                margin-bottom: 4px;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-
-        m = folium.Map(location=[c_lat, c_lon], zoom_start=13, tiles="OpenStreetMap")
-
-        sm_vis = {
-            "bands": ["Soil_Moisture_Pct"],
-            "min": 5.0,
-            "max": 45.0,
-            "palette": ["8c510a", "d8b365", "f6e8c3", "c7eae5", "5ab4ac", "01665e"]
-        }
-        lodging_vis = {
-            "bands": ["Lodging_Risk_Index"],
-            "min": 1.0,
-            "max": 6.0,
-            "palette": ["1a9641", "a6d96a", "ffffbf", "fdae61", "d7191c"]
-        }
-        ndvi_vis = {
-            "bands": ["NDVI"],
-            "min": 0.0,
-            "max": 0.8,
-            "palette": ["#8c510a", "#ffffbf", "#1b7837"]
-        }
-
-        add_ee_layer(m, soil_moisture, sm_vis, "Soil Moisture (%)", show=True)
-        add_ee_layer(m, lodging_risk, lodging_vis, "Lodging Risk Index", show=False)
-        add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)", show=False)
-
-        folium.LayerControl(position="topright", collapsed=False).add_to(m)
-        st_folium(m, use_container_width=True, height=520, returned_objects=[])
-
-        # 7. Side-by-Side: Moisture Trajectory & Patent Telemetry Engine
-        chart_col, telem_col = st.columns([1, 1])
-
-        with chart_col:
-            st.subheader("📈 Sub-Canopy Moisture Depletion")
-            
-            hist_days = [f"Day -{i}" for i in range(14, 0, -2)] + ["Today"]
-            hist_values = [round(mean_sm * (1.0 + (0.015 * i)), 1) for i in range(len(hist_days)-1, -1, -1)]
-            
-            decay_rate = 0.94 if c_crop.startswith("Paddy") else 0.91
-            fc_days = [f"Day +{i}" for i in range(2, 10, 2)]
-            fc_values = [round(mean_sm * (decay_rate ** (i/2)), 1) for i in range(1, len(fc_days) + 1)]
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=hist_days,
-                y=hist_values,
-                mode='lines+markers',
-                name='Radar History',
-                line=dict(color='#01665e', width=3),
-                marker=dict(size=6)
-            ))
-            fig.add_trace(go.Scatter(
-                x=[hist_days[-1]] + fc_days,
-                y=[hist_values[-1]] + fc_values,
-                mode='lines+markers',
-                name='Prognostic Forecast',
-                line=dict(color='#d95f02', width=3, dash='dash'),
-                marker=dict(size=6)
-            ))
-            fig.add_hline(
-                y=16.0,
-                line_dash="dot",
-                annotation_text="Wilting Stress (16%)",
-                annotation_position="bottom right",
-                line_color="#d7191c"
-            )
-            fig.update_layout(
-                xaxis_title="Timeline",
-                yaxis_title="Moisture (%)",
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="white"),
-                margin=dict(l=10, r=10, t=30, b=20),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with telem_col:
-            st.subheader("⚡ Closed-Loop Actuation Protocol (VRI)")
-            st.caption("Patent Technical Effect: ISO 11783-10 Compliant Actuator Dispatch")
-
-            # Determine dynamic valve parameters based on moisture & lodging
+            # Determine Actuator Vectors
             if lodging_label == "HIGH RISK":
                 valve_command = "INHIBIT_DISCHARGE_EMERGENCY"
                 duty_cycle = 0
@@ -369,39 +416,299 @@ if st.session_state["scan_performed"]:
                 app_depth_mm = 8.5
                 lockout = False
 
-            telemetry_payload = {
-                "protocol_standard": "ISO-11783-10:2026-VRI",
-                "actuator_target": f"AgroSAR-Grid-{c_lat:.3f}-{c_lon:.3f}",
-                "timestamp_utc": datetime.utcnow().isoformat() + "Z",
-                "biophysical_state": {
-                    "crop_type": c_crop,
-                    "soil_moisture_vwc": mean_sm,
-                    "surface_roughness": mean_roughness,
-                    "wind_speed_kmh": mean_wind_kmh,
-                    "lodging_threat_level": lodging_label
-                },
-                "control_vectors": {
-                    "manifold_command": valve_command,
-                    "solenoid_pwm_duty_pct": duty_cycle,
-                    "prescribed_depth_mm": app_depth_mm,
-                    "hydraulic_lockout_active": lockout
-                }
+            # Persist to session
+            st.session_state["scan_performed"] = True
+            st.session_state["scan_results"] = {
+                "lat": lat, "lon": lon, "buffer_km": buffer_km, "crop_type": crop_type,
+                "mean_sm": mean_sm, "mean_lodging": mean_lodging, "mean_wind_kmh": mean_wind_kmh,
+                "mean_roughness": mean_roughness, "mean_ndvi": mean_ndvi,
+                "lodging_label": lodging_label, "valve_command": valve_command,
+                "duty_cycle": duty_cycle, "app_depth_mm": app_depth_mm, "lockout": lockout,
+                "soil_moisture_layer": soil_moisture, "lodging_risk_layer": lodging_risk, "ndvi_layer": ndvi
             }
 
-            st.json(telemetry_payload)
-            st.download_button(
-                label="📥 Download VRI Machine Telemetry (JSON)",
-                data=json.dumps(telemetry_payload, indent=2),
-                file_name=f"AgroSAR_VRI_Telemetry_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                mime="application/json",
-                use_container_width=True
-            )
+# Global Header across all views
+st.markdown('<div class="hud-title">🛰️ AGROSAR | ORBITAL MISSION CONTROL</div>', unsafe_allow_html=True)
+st.markdown('<div class="hud-sub">CYBER-PHYSICAL SUB-CANOPY RADAR INVERSION & CLOSED-LOOP ACTUATION PORTAL</div>', unsafe_allow_html=True)
 
-        # 8. Step 5 Feature: 1-Click Field Audit Report Export
-        st.markdown("---")
-        st.subheader("📋 Comprehensive Agronomic Field Audit Report")
+res = st.session_state["scan_results"]
+
+# ==============================================================================
+# PAGE 1: MISSION BRIEFING & SYSTEM ARCHITECTURE
+# ==============================================================================
+if page == "🚀 Mission Briefing & Guide":
+    st.markdown(
+        """
+        <div class="mission-box">
+            <h3 style="color: #00f0ff; margin-top:0;">🌐 Operational Overview</h3>
+            <p><strong>AgroSAR</strong> is a spaceborne radar monitoring and variable-rate actuation infrastructure designed to invert sub-canopy root-zone soil hydrology without relying on physical ground probes.</p>
+            <p>Conventional optical vegetation indices (like NDVI) only evaluate top-canopy greenness and fail to detect subterranean root saturation or moisture deficits. AgroSAR leverages <strong>ESA Sentinel-1 C-band synthetic aperture radar (SAR)</strong> to penetrate dense crop foliage, separating soil dielectric permittivity from geometric surface roughness.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            """
+            <div class="hud-card">
+                <div class="hud-card-label">📡 Core Sensor Array</div>
+                <div style="color: #e2e8f0; font-size: 0.9rem; margin-top: 8px;">
+                    • <strong>Sentinel-1 C-SAR:</strong> 10m spatial resolution dual-polarization backscatter (VV / VH).<br>
+                    • <strong>Sentinel-2 MSI:</strong> 10m multispectral greenness for Water Cloud canopy attenuation.<br>
+                    • <strong>ECMWF ERA5-Land:</strong> Live 10m surface atmospheric wind reanalysis.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c2:
+        st.markdown(
+            """
+            <div class="hud-card">
+                <div class="hud-card-label">⚙️ Algorithmic Inversion</div>
+                <div style="color: #e2e8f0; font-size: 0.9rem; margin-top: 8px;">
+                    • <strong>Cross-Pol Decoupling:</strong> Isolates micro-roughness ($s$) via $\sigma^\circ_{VH} / \sigma^\circ_{VV}$ ratio.<br>
+                    • <strong>Water Cloud Inversion:</strong> Eliminates canopy scattering to compute true soil permittivity.<br>
+                    • <strong>Biomechanical Lodging:</strong> Solves aerodynamic drag torque vs. root anchorage resistance.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c3:
+        st.markdown(
+            """
+            <div class="hud-card">
+                <div class="hud-card-label">⚡ Autonomous Actuation</div>
+                <div style="color: #e2e8f0; font-size: 0.9rem; margin-top: 8px;">
+                    • <strong>ISOBUS Standard:</strong> Outputs ISO 11783-10 compliant JSON machine telemetry.<br>
+                    • <strong>Hydraulic Lockout:</strong> Halts irrigation automatically during elevated lodging risks.<br>
+                    • <strong>Zero Hardware Overhead:</strong> Operates entirely via cloud-hosted satellite processing.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+    st.subheader("📖 Quick-Start Operational Checklist")
+    st.markdown(
+        """
+        1. **Locate Target Field:** Enter any village, PIN code, or district in the sidebar coordinate uplink—or click **Ping Live Field GPS** if standing on-site.
+        2. **Select Phenology:** Choose your standing crop (Paddy, Wheat, or Maize) to calibrate stalk height, drag coefficients, and canopy scattering parameters.
+        3. **Initialize Radar Inversion:** Click **Initialize Spaceborne SAR Scan** to pull orbital data and run the inversion pipeline.
+        4. **Inspect Portals:** Use the sidebar navigation to toggle between the **Radar Analysis Canvas**, **Actuation Protocol (VRI)**, and the **Field Audit Report**.
+        """
+    )
+
+# ==============================================================================
+# PAGE 2: RADAR ANALYSIS & MONITORING CANVAS
+# ==============================================================================
+elif page == "🗺️ Radar Analysis Canvas":
+    if not res:
+        st.info("👈 Enter farm location in the sidebar and click **Initialize Spaceborne SAR Scan** to begin telemetry analysis.")
+    else:
+        # Idea 1 Fix: Custom Responsive Flex HUD Grid (Prevents "Moderate Risk" Truncation)
+        l_pill = "pill-red" if res["lodging_label"] == "HIGH RISK" else ("pill-amber" if res["lodging_label"] == "Moderate Risk" else "pill-green")
+        l_desc = "Severe toppling risk: High canopy drag on saturated soil." if res["lodging_label"] == "HIGH RISK" else (
+            "Moderate vulnerability: Dense vegetative cover." if res["lodging_label"] == "Moderate Risk" else "Stable: Stalks well-anchored in soil."
+        )
+
+        sm_pill = "pill-amber" if res["mean_sm"] < 16.0 else ("pill-blue" if res["mean_sm"] > 35.0 else "pill-green")
+        sm_desc = "Deficit: Root stress; pulse irrigation required." if res["mean_sm"] < 16.0 else (
+            "Waterlogged: Saturated; suspend furrow supply." if res["mean_sm"] > 35.0 else "Optimal: Favorable hydraulic conductivity."
+        )
+
+        r_desc = "Plowed / High Tilth: Heavy surface roughness filtered." if res["mean_roughness"] > 1.25 else "Smooth Seedbed: Minimal roughness interference."
+        w_desc = "High aerodynamic drag on standing stalks." if res["mean_wind_kmh"] > 25.0 else "Gentle breeze: Minimal mechanical shear stress."
+
+        hud_cards_html = f"""
+        <div class="hud-grid">
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">💧 Decoupled Moisture</div>
+                    <div class="hud-card-value">{res['mean_sm']:.1f}%</div>
+                </div>
+                <div class="hud-pill {sm_pill}">{sm_desc}</div>
+            </div>
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">🪨 Roughness Factor</div>
+                    <div class="hud-card-value">{res['mean_roughness']:.2f}</div>
+                </div>
+                <div class="hud-pill pill-blue">{r_desc}</div>
+            </div>
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">🌬️ ERA5 Surface Wind</div>
+                    <div class="hud-card-value">{res['mean_wind_kmh']:.1f} <span style="font-size:0.95rem; font-weight:400; color:#94a3b8;">km/h</span></div>
+                </div>
+                <div class="hud-pill pill-green">{w_desc}</div>
+            </div>
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">⚠️ Lodging Threat</div>
+                    <div class="hud-card-value" style="color: {'#ff3b5c' if res['lodging_label'] == 'HIGH RISK' else ('#ffb703' if res['lodging_label'] == 'Moderate Risk' else '#00ff9d')};">
+                        {res['lodging_label']}
+                    </div>
+                </div>
+                <div class="hud-pill {l_pill}">{l_desc}</div>
+            </div>
+        </div>
+        """
+        st.markdown(hud_cards_html, unsafe_allow_html=True)
+
+        # 10m Folium Map
+        st.subheader("🗺️ 10-Meter Sub-Canopy SAR Radar Heatmap")
+        st.markdown(
+            """
+            <style>
+            .leaflet-control-layers {
+                font-family: inherit !important;
+                font-size: 13px !important;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.5) !important;
+                border-radius: 8px !important;
+                padding: 10px 14px !important;
+                margin-right: 18px !important;
+                background: rgba(15, 23, 42, 0.9) !important;
+                color: #ffffff !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+        m = folium.Map(location=[res["lat"], res["lon"]], zoom_start=13, tiles="OpenStreetMap")
+
+        sm_vis = {
+            "bands": ["Soil_Moisture_Pct"],
+            "min": 5.0,
+            "max": 45.0,
+            "palette": ["8c510a", "d8b365", "f6e8c3", "c7eae5", "5ab4ac", "01665e"]
+        }
+        lodging_vis = {
+            "bands": ["Lodging_Risk_Index"],
+            "min": 1.0,
+            "max": 6.0,
+            "palette": ["1a9641", "a6d96a", "ffffbf", "fdae61", "d7191c"]
+        }
+        ndvi_vis = {
+            "bands": ["NDVI"],
+            "min": 0.0,
+            "max": 0.8,
+            "palette": ["#8c510a", "#ffffbf", "#1b7837"]
+        }
+
+        add_ee_layer(m, res["soil_moisture_layer"], sm_vis, "Sub-Canopy Moisture (%)", show=True)
+        add_ee_layer(m, res["lodging_risk_layer"], lodging_vis, "Lodging Risk Index", show=False)
+        add_ee_layer(m, res["ndvi_layer"], ndvi_vis, "Canopy Greenness (NDVI)", show=False)
+
+        folium.LayerControl(position="topright", collapsed=False).add_to(m)
+        st_folium(m, use_container_width=True, height=500, returned_objects=[])
+
+        # 30-Day Depletion Curve
+        st.subheader("📈 Sub-Canopy Moisture Trajectory & Depletion Forecast")
+        hist_days = [f"Day -{i}" for i in range(14, 0, -2)] + ["Today"]
+        hist_values = [round(res["mean_sm"] * (1.0 + (0.015 * i)), 1) for i in range(len(hist_days)-1, -1, -1)]
         
-        # Build structured markdown report
+        decay_rate = 0.94 if res["crop_type"].startswith("Paddy") else 0.91
+        fc_days = [f"Day +{i}" for i in range(2, 10, 2)]
+        fc_values = [round(res["mean_sm"] * (decay_rate ** (i/2)), 1) for i in range(1, len(fc_days) + 1)]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=hist_days, y=hist_values, mode='lines+markers', name='Radar History',
+            line=dict(color='#00ff9d', width=3), marker=dict(size=6)
+        ))
+        fig.add_trace(go.Scatter(
+            x=[hist_days[-1]] + fc_days, y=[hist_values[-1]] + fc_values, mode='lines+markers', name='Prognostic Forecast',
+            line=dict(color='#ffb703', width=3, dash='dash'), marker=dict(size=6)
+        ))
+        fig.add_hline(
+            y=16.0, line_dash="dot", annotation_text="Wilting Stress Point (16.0%)",
+            annotation_position="bottom right", line_color="#ff3b5c"
+        )
+        fig.update_layout(
+            xaxis_title="Timeline", yaxis_title="Volumetric Moisture (%)",
+            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="white"), margin=dict(l=10, r=10, t=30, b=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+# ==============================================================================
+# PAGE 3: CLOSED-LOOP ACTUATION PROTOCOL (VRI)
+# ==============================================================================
+elif page == "⚡ Actuation Protocol (VRI)":
+    if not res:
+        st.info("👈 Please execute a satellite radar scan from the sidebar to generate live machine telemetry.")
+    else:
+        st.markdown(
+            """
+            <div class="mission-box">
+                <h3 style="color: #00f0ff; margin-top:0;">⚡ Cyber-Physical Machine Actuation Console</h3>
+                <p>Patent Eligibility Technical Effect: Translates spaceborne SAR backscatter and atmospheric drag into real-time <strong>ISO 11783-10 (ISOBUS)</strong> machine control vectors.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Command Mode", res["valve_command"])
+        with c2:
+            st.metric("PWM Solenoid Duty", f"{res['duty_cycle']}%")
+        with c3:
+            st.metric("Hydraulic Lockout", "ACTIVE" if res["lockout"] else "INACTIVE")
+
+        telemetry_payload = {
+            "protocol_standard": "ISO-11783-10:2026-VRI",
+            "actuator_target": f"AgroSAR-Grid-{res['lat']:.3f}-{res['lon']:.3f}",
+            "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+            "biophysical_state": {
+                "crop_type": res["crop_type"],
+                "soil_moisture_vwc": res["mean_sm"],
+                "surface_roughness": res["mean_roughness"],
+                "wind_speed_kmh": res["mean_wind_kmh"],
+                "lodging_threat_level": res["lodging_label"]
+            },
+            "control_vectors": {
+                "manifold_command": res["valve_command"],
+                "solenoid_pwm_duty_pct": res["duty_cycle"],
+                "prescribed_depth_mm": res["app_depth_mm"],
+                "hydraulic_lockout_active": res["lockout"]
+            }
+        }
+
+        st.json(telemetry_payload)
+        st.download_button(
+            label="📥 Download ISO 11783-10 Telemetry Payload (JSON)",
+            data=json.dumps(telemetry_payload, indent=2),
+            file_name=f"AgroSAR_VRI_Telemetry_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json",
+            type="primary",
+            use_container_width=True
+        )
+
+# ==============================================================================
+# PAGE 4: COMPREHENSIVE FIELD AUDIT REPORT
+# ==============================================================================
+elif page == "📋 Field Audit Report":
+    if not res:
+        st.info("👈 Please execute a satellite radar scan from the sidebar to compile an official field audit.")
+    else:
+        st.markdown(
+            """
+            <div class="mission-box">
+                <h3 style="color: #00f0ff; margin-top:0;">📋 Spaceborne Field Audit Certification</h3>
+                <p>Formal diagnostic documentation for agronomic compliance, micro-insurance validation, and water-district verification.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
         report_timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         audit_text = f"""# AGROSAR SPACEBORNE AUDIT & BIOPHYSICAL PROGNOSTIC REPORT
 Generated: {report_timestamp}
@@ -411,50 +718,108 @@ Satellites: ESA Sentinel-1 C-SAR (10m) | ESA Sentinel-2 MSI | ECMWF ERA5-Land Re
 --------------------------------------------------------------------------------
 1. TARGET SCAN SUMMARY
 --------------------------------------------------------------------------------
-• Location Coordinates : Lat {c_lat:.4f}, Lon {c_lon:.4f}
-• Scan Radius          : {c_buffer} km
-• Crop Phenology       : {c_crop}
-• Surface Greenness    : NDVI {mean_ndvi:.2f}
+• Location Coordinates : Lat {res['lat']:.4f}, Lon {res['lon']:.4f}
+• Scan Radius          : {res['buffer_km']} km
+• Crop Phenology       : {res['crop_type']}
+• Surface Greenness    : NDVI {res['mean_ndvi']:.2f}
 
 --------------------------------------------------------------------------------
 2. SUB-CANOPY RADAR INVERSION (WATER CLOUD MODEL)
 --------------------------------------------------------------------------------
-• Inverted Root-Zone Moisture : {mean_sm:.2f}% Volumetric Water Content
-• Dynamic Roughness Factor    : {mean_roughness:.2f} (Cross-Pol Decoupled)
-• Hydraulic Classification    : {"Waterlogged / Saturated" if mean_sm > 35 else ("Moisture Deficit (Irrigation Required)" if mean_sm < 16 else "Optimal Hydraulic Conductivity")}
+• Inverted Root-Zone Moisture : {res['mean_sm']:.2f}% Volumetric Water Content
+• Dynamic Roughness Factor    : {res['mean_roughness']:.2f} (Cross-Pol Decoupled)
+• Hydraulic Classification    : {"Waterlogged / Saturated" if res['mean_sm'] > 35 else ("Moisture Deficit (Irrigation Required)" if res['mean_sm'] < 16 else "Optimal Hydraulic Conductivity")}
 
 --------------------------------------------------------------------------------
 3. BIOMECHANICAL LODGING PROGNOSTICS
 --------------------------------------------------------------------------------
-• Atmospheric Wind Vector     : {mean_wind_kmh:.1f} km/h (ECMWF 10m Reanalysis)
-• Lodging Risk Index Score    : {mean_lodging:.2f}
-• Structural Vulnerability    : {lodging_label}
-• Agronomic Directive         : {"Halt all canal irrigation and nitrogen application. Clear drainage channels to prevent stalk toppling." if lodging_label == "HIGH RISK" else "Stalk elasticity and root anchorage are structurally sound under current atmospheric load."}
+• Atmospheric Wind Vector     : {res['mean_wind_kmh']:.1f} km/h (ECMWF 10m Reanalysis)
+• Lodging Risk Index Score    : {res['mean_lodging']:.2f}
+• Structural Vulnerability    : {res['lodging_label']}
+• Agronomic Directive         : {"Halt all canal irrigation and nitrogen application. Clear drainage channels to prevent stalk toppling." if res['lodging_label'] == "HIGH RISK" else "Stalk elasticity and root anchorage are structurally sound under current atmospheric load."}
 
 --------------------------------------------------------------------------------
 4. AUTONOMOUS ACTUATION TELEMETRY (ISOBUS ISO 11783-10)
 --------------------------------------------------------------------------------
-• Actuation Mode              : {valve_command}
-• Prescribed Solenoid Duty    : {duty_cycle}%
-• Target Irrigation Depth     : {app_depth_mm} mm
-• Hydraulic Lockout Override  : {lockout}
+• Actuation Mode              : {res['valve_command']}
+• Prescribed Solenoid Duty    : {res['duty_cycle']}%
+• Target Irrigation Depth     : {res['app_depth_mm']} mm
+• Hydraulic Lockout Override  : {res['lockout']}
 
 --------------------------------------------------------------------------------
 AgroSAR Prognostics Engine — Spaceborne Precision Hydrology System
 """
+        st.code(audit_text, language="text")
+        st.download_button(
+            label="📄 Download Official Field Audit Certificate (TXT)",
+            data=audit_text,
+            file_name=f"AgroSAR_Audit_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain",
+            type="primary",
+            use_container_width=True
+        )
 
-        rep_col1, rep_col2 = st.columns([2, 1])
-        with rep_col1:
-            st.info("💡 **Ready for Insurance & Agronomic Compliance:** This formal audit log summarizes spaceborne radar backscatter, roughness decoupling, wind vectors, and machine actuation directives for field inspectors.")
-        with rep_col2:
-            st.download_button(
-                label="📄 Download Official Field Audit Report (TXT)",
-                data=audit_text,
-                file_name=f"AgroSAR_Audit_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                mime="text/plain",
-                type="primary",
-                use_container_width=True
-            )
+# ==============================================================================
+# PAGE 5: PROJECT INNOVATORS & MENTORSHIP
+# ==============================================================================
+elif page == "👥 Project Innovators & Mentor":
+    st.markdown(
+        """
+        <div class="mission-box">
+            <h3 style="color: #00f0ff; margin-top:0;">👥 Project Architecture & Engineering Team</h3>
+            <p>AgroSAR: A Multi-Temporal Spaceborne Radar Inversion Framework for Sub-Canopy Hydrology and Lodging Prognostics.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-else:
-    st.info("👈 Enter your village name or PIN code in the sidebar and click **Scan Farm with Satellite Radar** to begin.")
+    st.subheader("👨‍💻 Project Innovators / Builders")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(
+            """
+            <div class="hud-card" style="margin-bottom:14px;">
+                <div class="hud-card-label">Lead Architecture & Inversion Modeling</div>
+                <div style="font-size: 1.35rem; font-weight: 700; color:#ffffff; margin: 6px 0;">ANSH VERMA</div>
+                <div class="hud-pill pill-blue">Lead Developer & Radar Inversion Specialist</div>
+            </div>
+            <div class="hud-card" style="margin-bottom:14px;">
+                <div class="hud-card-label">Machine Actuation & Telemetry Protocol</div>
+                <div style="font-size: 1.35rem; font-weight: 700; color:#ffffff; margin: 6px 0;">BISHAL DUTTA</div>
+                <div class="hud-pill pill-green">Cyber-Physical Systems & ISOBUS Telemetry</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with col2:
+        st.markdown(
+            """
+            <div class="hud-card" style="margin-bottom:14px;">
+                <div class="hud-card-label">Geospatial Processing & Satellite Pipeline</div>
+                <div style="font-size: 1.35rem; font-weight: 700; color:#ffffff; margin: 6px 0;">ARGHYA PARAMANIK</div>
+                <div class="hud-pill pill-amber">Earth Observation & Planetary Data Pipeline</div>
+            </div>
+            <div class="hud-card" style="margin-bottom:14px;">
+                <div class="hud-card-label">Biophysical Modeling & Lodging Mechanics</div>
+                <div style="font-size: 1.35rem; font-weight: 700; color:#ffffff; margin: 6px 0;">ADRIJA SARKAR</div>
+                <div class="hud-pill pill-blue">Aerodynamic Drag & Crop Biomechanics</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+    st.subheader("🎓 Academic Guidance & Project Mentorship")
+    st.markdown(
+        """
+        <div class="hud-card" style="border-color: rgba(0, 255, 157, 0.45); background: rgba(10, 25, 20, 0.8);">
+            <div class="hud-card-label" style="color: #00ff9d;">Faculty Guide & Research Mentor</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color:#ffffff; margin: 8px 0;">PROF. SUBHRANGSHU DAS</div>
+            <div style="color: #94a3b8; font-size: 0.95rem;">
+                Department of Computer Science & Information Technology<br>
+                Mentorship on Section 3(k) Patent Feasibility, Technical Effect Validation & Spaceborne Hydrological Systems
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
