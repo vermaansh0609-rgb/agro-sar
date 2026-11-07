@@ -105,7 +105,7 @@ st.markdown(
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        min-height: 140px;
+        min-height: 165px;
     }
 
     .hud-card::before {
@@ -149,7 +149,7 @@ st.markdown(
         font-size: 1.85rem;
         font-weight: 800;
         color: #ffffff;
-        margin: 6px 0;
+        margin: 6px 0 2px 0;
         line-height: 1.15;
         white-space: normal;
         word-break: break-word;
@@ -160,10 +160,18 @@ st.markdown(
         font-weight: 800;
         color: #00f0ff;
         font-family: monospace;
-        margin: 8px 0;
+        margin: 6px 0 2px 0;
         line-height: 1.25;
         white-space: normal;
         word-break: break-all;
+    }
+
+    .card-explainer {
+        font-size: 0.72rem;
+        color: #64748b;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin-bottom: 8px;
+        line-height: 1.3;
     }
 
     .hud-pill {
@@ -235,7 +243,7 @@ if "scan_performed" not in st.session_state:
 if "scan_results" not in st.session_state:
     st.session_state["scan_results"] = None
 
-# Sidebar Navigation Only
+# Sidebar Navigation
 st.sidebar.markdown("### 🛰️ MISSION CONTROL")
 page = st.sidebar.radio(
     "Navigation Portal:",
@@ -249,7 +257,7 @@ page = st.sidebar.radio(
     index=1 if st.session_state["scan_performed"] else 0
 )
 
-# Global Header across all views
+# EXACT Top Header (Unchanged)
 st.markdown('<div class="hud-title">🛰️ AGROSAR | ORBITAL MISSION CONTROL</div>', unsafe_allow_html=True)
 st.markdown('<div class="hud-sub">CYBER-PHYSICAL SUB-CANOPY RADAR INVERSION & CLOSED-LOOP ACTUATION PORTAL</div>', unsafe_allow_html=True)
 
@@ -262,7 +270,7 @@ crop_params = {
 res = st.session_state["scan_results"]
 
 # ==============================================================================
-# PAGE 1: MISSION BRIEFING & SYSTEM ARCHITECTURE
+# PAGE 1: MISSION BRIEFING & SYSTEM ARCHITECTURE (Unchanged)
 # ==============================================================================
 if page == "🚀 Mission Briefing & Guide":
     st.markdown(
@@ -333,10 +341,9 @@ if page == "🚀 Mission Briefing & Guide":
     )
 
 # ==============================================================================
-# PAGE 2: RADAR ANALYSIS & MONITORING CANVAS (Includes Target Uplink Console)
+# PAGE 2: RADAR ANALYSIS & MONITORING CANVAS
 # ==============================================================================
 elif page == "🗺️ Radar Analysis Canvas":
-    # Target Coordinate Uplink Control Console
     with st.expander("📍 Target Coordinate Uplink & Radar Parameters", expanded=not st.session_state["scan_performed"]):
         col_gps, col_search, col_crop, col_radius = st.columns([1.2, 1.6, 1.2, 1.2])
 
@@ -400,12 +407,12 @@ elif page == "🗺️ Radar Analysis Canvas":
 
         if search_query:
             try:
-                geolocator = Nominatim(user_agent="agrosar_console_v2", timeout=4)
+                geolocator = Nominatim(user_agent="agrosar_console_v4", timeout=4)
                 location = geolocator.geocode(search_query + ", India")
                 if location:
                     lat = location.latitude
                     lon = location.longitude
-                    st.success(f"📍 Resolved: {location.address[:60]}... (Lat: {lat:.4f}, Lon: {lon:.4f})")
+                    st.success(f"📍 Target Resolved: {location.address[:60]}...")
             except Exception:
                 pass
 
@@ -417,7 +424,6 @@ elif page == "🗺️ Radar Analysis Canvas":
                     point = ee.Geometry.Point([lon, lat])
                     roi = point.buffer(buffer_km * 1000)
 
-                    # Sentinel-1 SAR
                     s1_coll = (
                         ee.ImageCollection('COPERNICUS/S1_GRD')
                         .filterBounds(roi)
@@ -433,7 +439,6 @@ elif page == "🗺️ Radar Analysis Canvas":
                     vh_filtered = s1.select('VH').convolve(boxcar).rename('VH_filtered')
                     s1 = s1.addBands([vv_filtered, vh_filtered])
 
-                    # Sentinel-2 Optical
                     s2_coll = (
                         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                         .filterBounds(roi)
@@ -444,7 +449,6 @@ elif page == "🗺️ Radar Analysis Canvas":
                     s2 = s2_coll.median().clip(roi)
                     ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI').clamp(0.0, 1.0)
 
-                    # ECMWF ERA5-Land Hourly Wind
                     era5_coll = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY").filterBounds(roi).limit(1)
                     era5_img = ee.Image(ee.Algorithms.If(
                         era5_coll.size().gt(0),
@@ -456,7 +460,6 @@ elif page == "🗺️ Radar Analysis Canvas":
                     v_wind = era5_img.select('v_component_of_wind_10m')
                     wind_speed = (u_wind.pow(2).add(v_wind.pow(2))).sqrt().rename('Wind_Speed_MPS').clip(roi)
 
-                    # Roughness Decoupled Water Cloud Inversion
                     A = crop_params[crop_type]["A"]
                     B = crop_params[crop_type]["B"]
                     r_weight = crop_params[crop_type]["roughness_weight"]
@@ -475,7 +478,6 @@ elif page == "🗺️ Radar Analysis Canvas":
 
                     soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-                    # Biomechanical Lodging Threat
                     depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
                     canopy_drag = ndvi.multiply(crop_params[crop_type]["stalk_height_m"]).multiply(wind_speed)
                     soil_softness = soil_moisture.divide(35.0).clamp(0.6, 2.0)
@@ -500,7 +502,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                     elif mean_lodging >= 2.2:
                         lodging_label = "Moderate Risk"
                     else:
-                        lodging_label = "Low Risk"
+                        lodging_label = "Safe / Low Risk"
 
                     if lodging_label == "HIGH RISK":
                         valve_command = "INHIBIT_DISCHARGE_EMERGENCY"
@@ -540,13 +542,13 @@ elif page == "🗺️ Radar Analysis Canvas":
         st.info("👈 Set your location in the top console and click **Initialize Spaceborne SAR Scan** to begin telemetry analysis.")
     else:
         l_pill = "pill-red" if res["lodging_label"] == "HIGH RISK" else ("pill-amber" if res["lodging_label"] == "Moderate Risk" else "pill-green")
-        l_desc = "Severe toppling risk: High canopy drag on saturated soil." if res["lodging_label"] == "HIGH RISK" else (
-            "Moderate vulnerability: Dense vegetative cover." if res["lodging_label"] == "Moderate Risk" else "Stable: Stalks well-anchored in soil."
+        l_desc = "Severe toppling danger: High canopy drag on wet soil." if res["lodging_label"] == "HIGH RISK" else (
+            "Caution: Stalks somewhat vulnerable to falling." if res["lodging_label"] == "Moderate Risk" else "Stable: Stalks securely anchored in soil."
         )
 
         sm_pill = "pill-amber" if res["mean_sm"] < 16.0 else ("pill-blue" if res["mean_sm"] > 35.0 else "pill-green")
         sm_desc = "Deficit: Root stress; pulse irrigation required." if res["mean_sm"] < 16.0 else (
-            "Waterlogged: Saturated; suspend furrow supply." if res["mean_sm"] > 35.0 else "Optimal: Favorable hydraulic conductivity."
+            "Waterlogged: Saturated; suspend furrow irrigation." if res["mean_sm"] > 35.0 else "Optimal: Healthy moisture availability."
         )
 
         r_desc = "Plowed / High Tilth: Heavy surface roughness filtered." if res["mean_roughness"] > 1.25 else "Smooth Seedbed: Minimal roughness interference."
@@ -558,6 +560,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                 <div>
                     <div class="hud-card-label">💧 Decoupled Moisture</div>
                     <div class="hud-card-value">{res['mean_sm']:.1f}%</div>
+                    <div class="card-explainer">True subterranean root water, calculated beneath crop foliage.</div>
                 </div>
                 <div class="hud-pill {sm_pill}">{sm_desc}</div>
             </div>
@@ -565,6 +568,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                 <div>
                     <div class="hud-card-label">🪨 Roughness Factor</div>
                     <div class="hud-card-value">{res['mean_roughness']:.2f}</div>
+                    <div class="card-explainer">Filters out bumps from tilling so radar isn't deceived.</div>
                 </div>
                 <div class="hud-pill pill-blue">{r_desc}</div>
             </div>
@@ -572,6 +576,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                 <div>
                     <div class="hud-card-label">🌬️ ERA5 Surface Wind</div>
                     <div class="hud-card-value">{res['mean_wind_kmh']:.1f} <span style="font-size:0.95rem; font-weight:400; color:#94a3b8;">km/h</span></div>
+                    <div class="card-explainer">Live 10-meter wind applying physical shear against crop stems.</div>
                 </div>
                 <div class="hud-pill pill-green">{w_desc}</div>
             </div>
@@ -581,6 +586,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                     <div class="hud-card-value" style="color: {'#ff3b5c' if res['lodging_label'] == 'HIGH RISK' else ('#ffb703' if res['lodging_label'] == 'Moderate Risk' else '#00ff9d')};">
                         {res['lodging_label']}
                     </div>
+                    <div class="card-explainer">Calculates if wind drag torque will topple roots in wet soil.</div>
                 </div>
                 <div class="hud-pill {l_pill}">{l_desc}</div>
             </div>
@@ -590,6 +596,8 @@ elif page == "🗺️ Radar Analysis Canvas":
 
         # 10m Folium Map
         st.subheader("🗺️ 10-Meter Sub-Canopy SAR Radar Heatmap")
+        st.caption("💡 **Tip:** Blue shades indicate high moisture, brown indicates dry soil. Use the top-right layer switch to inspect Lodging Risk or Greenness.")
+
         st.markdown(
             """
             <style>
@@ -638,6 +646,8 @@ elif page == "🗺️ Radar Analysis Canvas":
 
         # 30-Day Depletion Curve
         st.subheader("📈 Sub-Canopy Moisture Trajectory & Depletion Forecast")
+        st.caption("Solid teal line displays past radar observations; dashed amber line predicts soil drying speed over the upcoming days.")
+        
         hist_days = [f"Day -{i}" for i in range(14, 0, -2)] + ["Today"]
         hist_values = [round(res["mean_sm"] * (1.0 + (0.015 * i)), 1) for i in range(len(hist_days)-1, -1, -1)]
         
@@ -655,11 +665,11 @@ elif page == "🗺️ Radar Analysis Canvas":
             line=dict(color='#ffb703', width=3, dash='dash'), marker=dict(size=6)
         ))
         fig.add_hline(
-            y=16.0, line_dash="dot", annotation_text="Wilting Stress Point (16.0%)",
+            y=16.0, line_dash="dot", annotation_text="Wilting Stress Threshold (16.0%)",
             annotation_position="bottom right", line_color="#ff3b5c"
         )
         fig.update_layout(
-            xaxis_title="Timeline", yaxis_title="Volumetric Moisture (%)",
+            xaxis_title="Observation Timeline", yaxis_title="Volumetric Soil Moisture (%)",
             plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
             font=dict(color="white"), margin=dict(l=10, r=10, t=30, b=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -667,7 +677,7 @@ elif page == "🗺️ Radar Analysis Canvas":
         st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
-# PAGE 3: CLOSED-LOOP ACTUATION PROTOCOL (VRI) - Fixed Truncation
+# PAGE 3: CLOSED-LOOP ACTUATION PROTOCOL (VRI)
 # ==============================================================================
 elif page == "⚡ Actuation Protocol (VRI)":
     if not res:
@@ -685,7 +695,7 @@ elif page == "⚡ Actuation Protocol (VRI)":
 
         lockout_status = "ACTIVE" if res["lockout"] else "INACTIVE"
         lockout_pill = "pill-red" if res["lockout"] else "pill-green"
-        lockout_desc = "Emergency Inhibit: Water discharge locked out." if res["lockout"] else "Normal Operation: Solenoid circuits authorized."
+        lockout_desc = "Emergency Inhibit: Water discharge locked out to protect stalks." if res["lockout"] else "Normal Operation: Solenoid circuits authorized."
 
         vri_cards_html = f"""
         <div class="hud-grid-3">
@@ -693,6 +703,7 @@ elif page == "⚡ Actuation Protocol (VRI)":
                 <div>
                     <div class="hud-card-label">⚙️ Command Mode</div>
                     <div class="hud-card-value-cmd">{res['valve_command']}</div>
+                    <div class="card-explainer">The exact algorithmic instruction dispatched to the irrigation controller.</div>
                 </div>
                 <div class="hud-pill pill-blue">ISO 11783-10 Actuation Vector</div>
             </div>
@@ -700,6 +711,7 @@ elif page == "⚡ Actuation Protocol (VRI)":
                 <div>
                     <div class="hud-card-label">⚡ PWM Solenoid Duty</div>
                     <div class="hud-card-value">{res['duty_cycle']}%</div>
+                    <div class="card-explainer">Valve pulse frequency; delivers target water depth of {res['app_depth_mm']} mm.</div>
                 </div>
                 <div class="hud-pill pill-amber">Target Depth: {res['app_depth_mm']} mm</div>
             </div>
@@ -709,12 +721,15 @@ elif page == "⚡ Actuation Protocol (VRI)":
                     <div class="hud-card-value" style="color: {'#ff3b5c' if res['lockout'] else '#00ff9d'};">
                         {lockout_status}
                     </div>
+                    <div class="card-explainer">Autonomous fail-safe that cuts water when high winds threaten to uproot stalks.</div>
                 </div>
                 <div class="hud-pill {lockout_pill}">{lockout_desc}</div>
             </div>
         </div>
         """
         st.markdown(vri_cards_html, unsafe_allow_html=True)
+
+        st.caption("💻 **ISOBUS ISO 11783-10 Telemetry Stream:** International standardized machine-readable payload ready for tractor & pivot terminals.")
 
         telemetry_payload = {
             "protocol_standard": "ISO-11783-10:2026-VRI",
