@@ -37,7 +37,7 @@ def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
         map_id_dict = ee.Image(ee_image_object).visualize(**vis_params).getMapId()
         folium.raster_layers.TileLayer(
             tiles=map_id_dict['tile_fetcher'].url_format,
-            attr='Google Earth Engine / Copernicus',
+            attr='Google Earth Engine / Copernicus / ECMWF',
             name=name,
             overlay=True,
             control=True,
@@ -48,7 +48,7 @@ def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
 
 # 2. Header
 st.title("🌾 AgroSAR: Spaceborne Sub-Canopy Soil Radar & Lodging Prognostics")
-st.caption("Powered by ESA Sentinel-1 C-Band SAR & Sentinel-2 Optical Earth Observation")
+st.caption("Powered by ESA Sentinel-1 C-Band SAR, Sentinel-2 Optical & ECMWF ERA5-Land Reanalysis")
 
 # Initialize session state
 if "scan_performed" not in st.session_state:
@@ -71,7 +71,7 @@ lon = 76.4880
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_speed", timeout=4)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step1", timeout=4)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -90,10 +90,11 @@ crop_type = st.sidebar.selectbox(
     ["Paddy / Rice (धान)", "Wheat (गेहूँ)", "Maize (मक्का)"]
 )
 
+# Biophysical scattering and mechanical height parameters
 crop_params = {
-    "Paddy / Rice (धान)": {"A": 0.0014, "B": 0.145},
-    "Wheat (गेहूँ)": {"A": 0.0011, "B": 0.125},
-    "Maize (मक्का)": {"A": 0.0022, "B": 0.180}
+    "Paddy / Rice (धान)": {"A": 0.0014, "B": 0.145, "stalk_height_m": 0.95},
+    "Wheat (गेहूँ)": {"A": 0.0011, "B": 0.125, "stalk_height_m": 0.85},
+    "Maize (मक्का)": {"A": 0.0022, "B": 0.180, "stalk_height_m": 2.10}
 }
 
 if st.sidebar.button("🔍 Scan Farm with Satellite Radar", type="primary"):
@@ -116,16 +117,15 @@ if st.session_state["scan_performed"]:
         c_buffer = params["buffer_km"]
         c_crop = params["crop_type"]
 
-        with st.spinner("⚡ Retrieving satellite radar and computing sub-canopy dynamics..."):
+        with st.spinner("🛰️ Retrieving Sentinel SAR, Optical, and ECMWF ERA5 wind data..."):
             point = ee.Geometry.Point([c_lon, c_lat])
             roi = point.buffer(c_buffer * 1000)
 
-            # Fast 60-day temporal bounds to avoid scanning the entire archive
             now = datetime.now()
             start_date = (now - timedelta(days=60)).strftime('%Y-%m-%d')
             end_date = now.strftime('%Y-%m-%d')
 
-            # Sentinel-1 SAR (IW mode, dual-polarization)
+            # 1. Sentinel-1 SAR (IW mode, dual-polarization)
             s1_coll = (
                 ee.ImageCollection('COPERNICUS/S1_GRD')
                 .filterBounds(roi)
@@ -136,7 +136,6 @@ if st.session_state["scan_performed"]:
                 .limit(5)
             )
 
-            # Fallback if recent 60-day swath is sparse
             s1_coll_fallback = (
                 ee.ImageCollection('COPERNICUS/S1_GRD')
                 .filterBounds(roi)
@@ -153,13 +152,12 @@ if st.session_state["scan_performed"]:
                 s1_coll_fallback.median()
             )).clip(roi)
 
-            # Fast 3x3 convolution
             boxcar = ee.Kernel.square(radius=2, units='pixels')
             vv_filtered = s1.select('VV').convolve(boxcar).rename('VV_filtered')
             vh_filtered = s1.select('VH').convolve(boxcar).rename('VH_filtered')
             s1 = s1.addBands([vv_filtered, vh_filtered])
 
-            # Sentinel-2 Harmonized Surface Reflectance
+            # 2. Sentinel-2 Optical
             s2_coll = (
                 ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                 .filterBounds(roi)
@@ -184,7 +182,18 @@ if st.session_state["scan_performed"]:
 
             ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI').clamp(0.0, 1.0)
 
-            # Water Cloud Model (WCM) Inversion
+            # 3. ERA5-Land Hourly Wind Reanalysis (NEW)
+            era5 = (
+                ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
+                .filterBounds(roi)
+                .sort('system:time_start', False)
+                .first()
+            )
+            u_wind = era5.select('u_component_of_wind_10m')
+            v_wind = era5.select('v_component_of_wind_10m')
+            wind_speed = (u_wind.pow(2).add(v_wind.pow(2))).sqrt().rename('Wind_Speed_MPS').clip(roi)
+
+            # 4. Water Cloud Model Inversion
             A = crop_params[c_crop]["A"]
             B = crop_params[c_crop]["B"]
 
@@ -197,15 +206,15 @@ if st.session_state["scan_performed"]:
             sigma_soil_linear = sigma_vv_linear.subtract(sigma_veg).divide(tau_sq)
             sigma_soil_db = sigma_soil_linear.log10().multiply(10.0)
 
-            # Volumetric soil moisture estimation (%)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # Pre-harvest lodging vulnerability index
+            # 5. Coupled Mechanical Lodging Risk: (VV - VH) * Canopy Height * Wind Speed
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
-            lodging_risk = depol_ratio.multiply(ndvi).rename('Lodging_Risk_Index')
+            canopy_drag = ndvi.multiply(crop_params[c_crop]["stalk_height_m"]).multiply(wind_speed)
+            lodging_risk = depol_ratio.multiply(canopy_drag).rename('Lodging_Risk_Index')
 
-            # Fast regional zonal stats calculation at scale=100
-            stats = soil_moisture.addBands(lodging_risk).reduceRegion(
+            # Regional zonal statistics
+            stats = soil_moisture.addBands(lodging_risk).addBands(wind_speed).reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
                 scale=100,
@@ -213,42 +222,42 @@ if st.session_state["scan_performed"]:
                 bestEffort=True
             ).getInfo()
 
-            mean_sm = stats.get('Soil_Moisture_Pct')
-            mean_lodging = stats.get('Lodging_Risk_Index')
+            mean_sm = float(stats.get('Soil_Moisture_Pct') or 24.5)
+            mean_lodging = float(stats.get('Lodging_Risk_Index') or 2.8)
+            mean_wind_kmh = float(stats.get('Wind_Speed_MPS') or 3.2) * 3.6  # convert m/s to km/h
 
-            if mean_sm is None:
-                mean_sm = 24.5
-            if mean_lodging is None:
-                mean_lodging = 2.8
-
-            mean_sm = float(mean_sm)
-            mean_lodging = float(mean_lodging)
-
-        # 5. Advisory Cards
-        col1, col2 = st.columns(2)
+        # 5. Advisory Cards: 3 Columns
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("💧 Average Root-Zone Moisture", f"{mean_sm:.1f}%")
+            st.metric("💧 Root-Zone Moisture", f"{mean_sm:.1f}%")
             if mean_sm < 16.0:
-                st.warning("⚠️ Critical Moisture Deficit: Soil moisture is below 16%. Root dehydration risk; schedule deep irrigation.")
+                st.warning("Soil deficit: Root dehydration risk; deep irrigation needed.")
             elif mean_sm > 35.0:
-                st.info("🌊 Saturated / Waterlogged: Moisture above 35%. Root-zone aeration reduced; suspend furrow irrigation.")
+                st.info("Waterlogged: Root aeration reduced; suspend furrow irrigation.")
             else:
-                st.success("✅ Optimal Root-Zone: Moisture levels (16–35%) maintain favorable hydraulic conductivity.")
+                st.success("Optimal: Favorable hydraulic conductivity.")
 
         with col2:
-            if mean_lodging >= 4.0 or (mean_lodging >= 3.2 and mean_sm > 30.0):
-                st.metric("⚠️ Pre-Harvest Lodging Threat", "HIGH RISK", delta="Stem Lodging Alert", delta_color="inverse")
-                st.error("🚨 Critical Lodging Threat: Heavy canopy weight over weakened/soft rootbed. Wind or flood events risk severe crop flattening.")
-            elif mean_lodging >= 2.5:
-                st.metric("⚠️ Pre-Harvest Lodging Threat", "Moderate Risk", delta="Watch Closely")
-                st.warning("⚖️ Moderate Lodging Vulnerability: Dense vegetative cover observed. Avoid over-irrigation before scheduled harvest.")
+            st.metric("🌬️ ERA5 Surface Wind", f"{mean_wind_kmh:.1f} km/h")
+            if mean_wind_kmh > 25.0:
+                st.warning("High aerodynamic drag on standing stalks.")
             else:
-                st.metric("⚠️ Pre-Harvest Lodging Threat", "Low Risk", delta="Stable Anchorage")
-                st.success("🛡️ Stable Anchorage: Balanced stalk-to-soil ratio. Minimal structural lodging risk.")
+                st.success("Gentle breeze: Minimal mechanical shear stress.")
+
+        with col3:
+            if mean_lodging >= 3.5 or (mean_lodging >= 2.6 and mean_wind_kmh > 22.0):
+                st.metric("⚠️ Lodging Threat", "HIGH RISK")
+                st.error("Severe toppling risk: High canopy drag on saturated soil.")
+            elif mean_lodging >= 2.0:
+                st.metric("⚠️ Lodging Threat", "Moderate Risk")
+                st.warning("Moderate vulnerability: Dense vegetative cover.")
+            else:
+                st.metric("⚠️ Lodging Threat", "Low Risk")
+                st.success("Stable: Stalks well-anchored in soil.")
 
         # 6. Interactive Folium Map
         st.subheader("🗺️ 10-Meter Sub-Canopy Radar Heatmap")
-        
+
         st.markdown(
             """
             <style>
@@ -290,13 +299,11 @@ if st.session_state["scan_performed"]:
             "palette": ["#8c510a", "#ffffbf", "#1b7837"]
         }
 
-        # Sub-Canopy Soil Moisture is active by default; others load on selection
         add_ee_layer(m, soil_moisture, sm_vis, "Soil Moisture (%)", show=True)
         add_ee_layer(m, lodging_risk, lodging_vis, "Lodging Risk Index", show=False)
         add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)", show=False)
 
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
-
         st_folium(m, use_container_width=True, height=520, returned_objects=[])
 
 else:
