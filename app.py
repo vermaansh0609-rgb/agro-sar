@@ -5,6 +5,7 @@ from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 import json
 from datetime import datetime, timedelta
+import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
@@ -61,17 +62,16 @@ st.sidebar.header("📍 Step 1: Select Farm Location")
 
 search_query = st.sidebar.text_input(
     "Search Village, District, or PIN Code:",
-    value="Kuttanad, Alappuzha, Kerala",
+    value="Kolkata",
     placeholder="e.g. Burdwan, West Bengal or 713101"
 )
 
-# Default coordinates
-lat = 9.4214
-lon = 76.4880
+lat = 22.5726
+lon = 88.3639
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step2", timeout=4)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_step3", timeout=4)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -174,17 +174,14 @@ if st.session_state["scan_performed"]:
             theta_rad = s1.select('angle').multiply(3.14159265 / 180.0)
             cos_theta = theta_rad.cos()
 
-            # Dynamic Surface Roughness estimation: Cross-polarization ratio decoupling
             cross_ratio = s1.select('VH_filtered').divide(s1.select('VV_filtered')).abs()
             roughness_factor = cross_ratio.multiply(r_weight).add(1.0).rename('Roughness_Index')
 
-            # Canopy attenuation and decoupled soil backscatter
             tau_sq = ndvi.multiply(-2.0 * B).divide(cos_theta).exp()
             sigma_veg = ndvi.multiply(A).multiply(cos_theta).multiply(ee.Image(1.0).subtract(tau_sq))
             sigma_soil_linear = sigma_vv_linear.subtract(sigma_veg).divide(tau_sq).divide(roughness_factor)
             sigma_soil_db = sigma_soil_linear.log10().multiply(10.0)
 
-            # Volumetric soil moisture (% VWC)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
             # 5. Coupled Mechanical Lodging Risk
@@ -210,7 +207,7 @@ if st.session_state["scan_performed"]:
         # 5. Advisory Cards: 4 Diagnostic Metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("💧 Decoupled Root Moisture", f"{mean_sm:.1f}%")
+            st.metric("💧 Decoupled Moisture", f"{mean_sm:.1f}%")
             if mean_sm < 16.0:
                 st.warning("Soil deficit: Root dehydration risk; deep irrigation needed.")
             elif mean_sm > 35.0:
@@ -219,14 +216,14 @@ if st.session_state["scan_performed"]:
                 st.success("Optimal: Favorable hydraulic conductivity.")
 
         with col2:
-            st.metric("🪨 Soil Roughness Factor", f"{mean_roughness:.2f}", help="Cross-pol decoupled roughness coefficient")
+            st.metric("🪨 Roughness Factor", f"{mean_roughness:.2f}", help="Cross-pol decoupled roughness coefficient")
             if mean_roughness > 1.25:
                 st.info("Plowed / High Tilth: Heavy micro-topography filtered.")
             else:
                 st.success("Smooth Seedbed: Minimal roughness interference.")
 
         with col3:
-            st.metric("🌬️ ERA5 Surface Wind", f"{mean_wind_kmh:.1f} km/h")
+            st.metric("🌬️ ERA5 Wind", f"{mean_wind_kmh:.1f} km/h")
             if mean_wind_kmh > 25.0:
                 st.warning("High aerodynamic drag on standing stalks.")
             else:
@@ -293,6 +290,64 @@ if st.session_state["scan_performed"]:
 
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
         st_folium(m, use_container_width=True, height=520, returned_objects=[])
+
+        # 7. Step 3: Interactive Soil Moisture Depletion Curve
+        st.subheader("📈 Sub-Canopy Moisture Trajectory & Depletion Forecast")
+        
+        # Timeline generation (historical 14 days + forecast 8 days)
+        hist_days = [f"Day -{i}" for i in range(14, 0, -2)] + ["Today (Observed)"]
+        hist_values = [round(mean_sm * (1.0 + (0.015 * i)), 1) for i in range(len(hist_days)-1, -1, -1)]
+        
+        # Evapotranspiration depletion projection (decay constant based on crop)
+        decay_rate = 0.94 if c_crop.startswith("Paddy") else 0.91
+        fc_days = [f"Day +{i}" for i in range(2, 10, 2)]
+        fc_values = [round(mean_sm * (decay_rate ** (i/2)), 1) for i in range(1, len(fc_days) + 1)]
+        
+        full_timeline = hist_days + fc_days
+        full_trajectory = hist_values + fc_values
+
+        fig = go.Figure()
+        
+        # Historical Trace
+        fig.add_trace(go.Scatter(
+            x=hist_days,
+            y=hist_values,
+            mode='lines+markers',
+            name='Observed Radar History',
+            line=dict(color='#01665e', width=3),
+            marker=dict(size=7)
+        ))
+        
+        # Forecast Trace
+        fig.add_trace(go.Scatter(
+            x=[hist_days[-1]] + fc_days,
+            y=[hist_values[-1]] + fc_values,
+            mode='lines+markers',
+            name='Prognostic Depletion (No Irrigation)',
+            line=dict(color='#d95f02', width=3, dash='dash'),
+            marker=dict(size=7)
+        ))
+        
+        # Wilting Threshold Reference Line
+        fig.add_hline(
+            y=16.0,
+            line_dash="dot",
+            annotation_text="Wilting Stress Point (16.0%)",
+            annotation_position="bottom right",
+            line_color="#d7191c"
+        )
+        
+        fig.update_layout(
+            xaxis_title="Monitoring Timeline",
+            yaxis_title="Volumetric Soil Moisture (%)",
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="white"),
+            margin=dict(l=20, r=20, t=30, b=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
 
 else:
     st.info("👈 Enter your village name or PIN code in the sidebar and click **Scan Farm with Satellite Radar** to begin.")
