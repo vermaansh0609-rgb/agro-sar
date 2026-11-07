@@ -31,7 +31,7 @@ def authenticate_gee():
 gee_ready, auth_error = authenticate_gee()
 
 # Helper function: Convert any Earth Engine Image into a Folium Tile Layer safely
-def add_ee_layer(m, ee_image_object, vis_params, name):
+def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
     try:
         map_id_dict = ee.Image(ee_image_object).visualize(**vis_params).getMapId()
         folium.raster_layers.TileLayer(
@@ -39,7 +39,8 @@ def add_ee_layer(m, ee_image_object, vis_params, name):
             attr='Google Earth Engine / Copernicus',
             name=name,
             overlay=True,
-            control=True
+            control=True,
+            show=show
         ).add_to(m)
     except Exception as e:
         st.warning(f"Note on layer '{name}': {e}")
@@ -51,25 +52,25 @@ st.caption("Powered by ESA Sentinel-1 C-Band SAR & Sentinel-2 Optical Earth Obse
 # Initialize session state for persistent results across map renders
 if "scan_performed" not in st.session_state:
     st.session_state["scan_performed"] = False
-if "scan_results" not in st.session_state:
-    st.session_state["scan_results"] = None
+if "scan_params" not in st.session_state:
+    st.session_state["scan_params"] = None
 
 # 3. Sidebar: Farmer-Friendly Location & Crop Settings
 st.sidebar.header("📍 Step 1: Select Farm Location")
 
 search_query = st.sidebar.text_input(
     "Search Village, District, or PIN Code:",
-    value="Robertsganj, Uttar Pradesh",
+    value="Kuttanad, Alappuzha, Kerala",
     placeholder="e.g. Burdwan, West Bengal or 713101"
 )
 
-# Default coordinates (Robertsganj, Sonbhadra, UP)
-lat = 24.6958
-lon = 83.0645
+# Default coordinates (Kuttanad paddy bowl, Kerala)
+lat = 9.4214
+lon = 76.4880
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v4", timeout=5)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v5", timeout=5)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -156,7 +157,7 @@ if st.session_state["scan_performed"]:
             )
 
             s2 = s2_coll.median().clip(roi)
-            ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI')
+            ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI').clamp(0.0, 1.0)
 
             # Water Cloud Model (WCM) Inversion
             A = crop_params[c_crop]["A"]
@@ -174,39 +175,52 @@ if st.session_state["scan_performed"]:
             # Volumetric soil moisture estimation (%)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # Pre-harvest lodging vulnerability index
+            # Pre-harvest lodging vulnerability index: (VV - VH) * NDVI
+            # High canopy weight + soft surface = high risk values (> 3.5)
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
             lodging_risk = depol_ratio.multiply(ndvi).rename('Lodging_Risk_Index')
 
-            # Compute mean moisture over ROI
-            mean_stats = soil_moisture.reduceRegion(
+            # Compute regional zonal statistics
+            stats = soil_moisture.addBands(lodging_risk).reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
                 scale=60,
                 maxPixels=1e6
             ).getInfo()
 
-            mean_sm = mean_stats.get('Soil_Moisture_Pct')
+            mean_sm = stats.get('Soil_Moisture_Pct')
+            mean_lodging = stats.get('Lodging_Risk_Index')
+
             if mean_sm is None:
                 mean_sm = 24.5
+            if mean_lodging is None:
+                mean_lodging = 2.8
+
+            mean_sm = float(mean_sm)
+            mean_lodging = float(mean_lodging)
 
         # 5. Advisory Cards
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("💧 Average Root-Zone Moisture", f"{float(mean_sm):.1f}%")
-            if float(mean_sm) < 18.0:
-                st.warning("Soil is dry beneath canopy. Irrigation recommended within 24-48 hours.")
-            elif float(mean_sm) > 38.0:
-                st.info("Soil is near saturation. Delay irrigation to protect root anchorage.")
+            st.metric("💧 Average Root-Zone Moisture", f"{mean_sm:.1f}%")
+            if mean_sm < 16.0:
+                st.warning("⚠️ Critical Moisture Deficit: Soil moisture is below 16%. Root dehydration risk; schedule deep irrigation.")
+            elif mean_sm > 35.0:
+                st.info("🌊 Saturated / Waterlogged: Moisture above 35%. Root-zone aeration reduced; suspend furrow irrigation.")
             else:
-                st.success("Moisture levels are optimal for current vegetative stage.")
+                st.success("✅ Optimal Root-Zone: Moisture levels (16–35%) maintain favorable hydraulic conductivity.")
 
         with col2:
-            st.metric("⚠️ Pre-Harvest Lodging Threat", "Moderate Risk" if float(mean_sm) > 30 else "Low Risk")
-            if float(mean_sm) > 30:
-                st.warning("High canopy weight + soft root-bed. Avoid surface flooding before windy spells.")
+            # Lodging Risk classification using actual radar lodging index
+            if mean_lodging >= 4.0 or (mean_lodging >= 3.2 and mean_sm > 30.0):
+                st.metric("⚠️ Pre-Harvest Lodging Threat", "HIGH RISK", delta="Stem Lodging Alert", delta_color="inverse")
+                st.error("🚨 Critical Lodging Threat: Heavy canopy weight over weakened/soft rootbed. Wind or flood events risk severe crop flattening.")
+            elif mean_lodging >= 2.5:
+                st.metric("⚠️ Pre-Harvest Lodging Threat", "Moderate Risk", delta="Watch Closely")
+                st.warning("⚖️ Moderate Lodging Vulnerability: Dense vegetative cover observed. Avoid over-irrigation before scheduled harvest.")
             else:
-                st.success("Stems and root-bed show stable structural anchorage.")
+                st.metric("⚠️ Pre-Harvest Lodging Threat", "Low Risk", delta="Stable Anchorage")
+                st.success("🛡️ Stable Anchorage: Balanced stalk-to-soil ratio. Minimal structural lodging risk.")
 
         # 6. Interactive Folium Map
         st.subheader("🗺️ 10-Meter Sub-Canopy Radar Heatmap")
@@ -220,8 +234,8 @@ if st.session_state["scan_performed"]:
         }
         lodging_vis = {
             "bands": ["Lodging_Risk_Index"],
-            "min": 2.0,
-            "max": 10.0,
+            "min": 1.0,
+            "max": 6.0,
             "palette": ["1a9641", "a6d96a", "ffffbf", "fdae61", "d7191c"]
         }
         ndvi_vis = {
@@ -231,13 +245,12 @@ if st.session_state["scan_performed"]:
             "palette": ["#8c510a", "#ffffbf", "#1b7837"]
         }
 
-        add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)")
-        add_ee_layer(m, soil_moisture, sm_vis, "Sub-Canopy Soil Moisture (%)")
-        add_ee_layer(m, lodging_risk, lodging_vis, "Pre-Harvest Lodging Risk")
+        # Sub-Canopy Soil Moisture is displayed by default (show=True)
+        add_ee_layer(m, soil_moisture, sm_vis, "Sub-Canopy Soil Moisture (%)", show=True)
+        add_ee_layer(m, lodging_risk, lodging_vis, "Pre-Harvest Lodging Risk", show=True)
+        add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)", show=False)
 
-        folium.LayerControl().add_to(m)
-        
-        # returned_objects=[] prevents Streamlit from rerunning and resetting on map interactions
+        folium.LayerControl(collapsed=False).add_to(m)
         st_folium(m, width=950, height=550, returned_objects=[])
 
 else:
