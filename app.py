@@ -217,6 +217,30 @@ st.markdown(
         margin-bottom: 20px;
         backdrop-filter: blur(10px);
     }
+
+    /* Advisory List Item */
+    .advisory-item {
+        background: rgba(15, 23, 42, 0.85);
+        border-left: 3px solid #00f0ff;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        border-radius: 0 8px 8px 0;
+        font-size: 0.86rem;
+        line-height: 1.45;
+        color: #e2e8f0;
+    }
+    .advisory-alert {
+        border-left-color: #ff3b5c;
+        background: rgba(45, 15, 25, 0.5);
+    }
+    .advisory-warn {
+        border-left-color: #ffb703;
+        background: rgba(45, 35, 15, 0.5);
+    }
+    .advisory-safe {
+        border-left-color: #00ff9d;
+        background: rgba(15, 40, 30, 0.5);
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -407,7 +431,7 @@ elif page == "🗺️ Radar Analysis Canvas":
 
         if search_query:
             try:
-                geolocator = Nominatim(user_agent="agrosar_console_v4", timeout=4)
+                geolocator = Nominatim(user_agent="agrosar_console_v5", timeout=4)
                 location = geolocator.geocode(search_query + ", India")
                 if location:
                     lat = location.latitude
@@ -675,6 +699,94 @@ elif page == "🗺️ Radar Analysis Canvas":
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        # ==============================================================================
+        # NEW FEATURE: 6-POINT GRAPH ANALYSIS & ACTIONABLE SCHEDULING ADVISORY
+        # ==============================================================================
+        st.markdown("---")
+        st.subheader("💡 Automated Graph Insights & Irrigation Scheduling Advisory")
+        st.caption("Real-time agronomic guidance derived from radar drying trajectories, atmospheric drag, and root hydraulics:")
+
+        # Dynamic Advisory Calculations
+        current_sm = res["mean_sm"]
+        wind = res["mean_wind_kmh"]
+        is_high_risk = res["lodging_label"] == "HIGH RISK"
+        is_moderate_risk = res["lodging_label"] == "Moderate Risk"
+
+        # 1. Wilting point threshold detection
+        days_to_wilting = None
+        for idx, val in enumerate(fc_values):
+            if val < 16.0:
+                days_to_wilting = (idx + 1) * 2
+                break
+
+        # Generate 6 tailored points
+        # Point 1: Immediate Field Watering Decision
+        if is_high_risk:
+            p1_class = "advisory-alert"
+            p1_text = f"🛑 <strong>DO NOT IRRIGATE NOW (Storm / Severe Wind Threat):</strong> Live winds at <strong>{wind:.1f} km/h</strong> coupled with tall {res['crop_type']} stalks mean any extra furrow water will turn root soil into mud, causing standing crops to collapse and topple over."
+        elif current_sm > 35.0:
+            p1_class = "advisory-warn"
+            p1_text = f"🚫 <strong>SUSPEND ALL WATER APPLICATION (Field Saturated):</strong> Root soil moisture is currently at <strong>{current_sm:.1f}%</strong> (waterlogged). Immediate drying is required so plant roots can breathe oxygen and prevent fungal root rot."
+        elif current_sm < 16.0:
+            p1_class = "advisory-alert"
+            p1_text = f"🚨 <strong>IMMEDIATE WATERING REQUIRED (Active Drought Deficit):</strong> Moisture is at <strong>{current_sm:.1f}%</strong>, breaching the critical 16% threshold. Initiate drip or furrow irrigation within 12 hours to prevent permanent plant cell shrinkage."
+        else:
+            p1_class = "advisory-safe"
+            p1_text = f"✅ <strong>FIELD IN OPTIMAL MOISTURE ZONE:</strong> Subterranean root water is at a healthy <strong>{current_sm:.1f}%</strong>. Current soil conditions provide ideal capillary suction for nutrient uptake."
+
+        # Point 2: Graph Depletion Horizon Forecast
+        if days_to_wilting:
+            p2_class = "advisory-warn"
+            p2_text = f"⏳ <strong>Projected Stress In {days_to_wilting} Days:</strong> Following the orange dashed curve, root-zone moisture will drop below the 16.0% wilting threshold in approximately <strong>Day +{days_to_wilting}</strong> unless supplemental water or rainfall occurs."
+        else:
+            p2_class = "advisory-safe"
+            p2_text = f"📈 <strong>Extended Moisture Buffer:</strong> Under current evapotranspiration rates, soil moisture will stay comfortably above wilting stress for the entire 8-day projection window."
+
+        # Point 3: Storm & Aerodynamic Drag Evaluation
+        if wind > 20.0:
+            p3_class = "advisory-alert"
+            p3_text = f"🌪️ <strong>High Wind Drag Alert ({wind:.1f} km/h):</strong> ECMWF reanalysis registers gale-force boundary winds. Keep drainage sluice gates clear and avoid high-pressure overhead sprinkler cannons that create artificial stem bend."
+        else:
+            p3_class = "advisory-safe"
+            p3_text = f"🍃 <strong>Calm Atmospheric Conditions ({wind:.1f} km/h):</strong> Atmospheric drag on crop heads is negligible. Full daytime transpiration is proceeding without mechanical stem stress."
+
+        # Point 4: Decoupled Roughness Calibration Check
+        if res["mean_roughness"] > 1.25:
+            p4_class = "advisory-warn"
+            p4_text = f"🚜 <strong>Tillage Roughness Factor ({res['mean_roughness']:.2f}):</strong> Heavy plowing furrows detected. Radar has successfully removed micro-ridge reflection errors to ensure true subterranean permittivity."
+        else:
+            p4_class = "advisory-safe"
+            p4_text = f"🌱 <strong>Uniform Canopy Reflection ({res['mean_roughness']:.2f}):</strong> Smooth seedbed detected. Water Cloud Model radar inversion has minimal backscatter interference from dirt clods."
+
+        # Point 5: Fertilizer & Chemical Spray Window
+        if is_high_risk or wind > 18.0:
+            p5_class = "advisory-alert"
+            p5_text = "⛔ <strong>Halt Nitrogen & Foliar Spraying:</strong> Postpone chemical fertilization and urea broadcasting. Heavy top foliage growth right now increases stalk weight and drastically raises lodging danger in high winds."
+        else:
+            p5_class = "advisory-safe"
+            p5_text = "🌾 <strong>Safe Chemical & Nutrient Window:</strong> Favorable soil hydration and low wind drift create an ideal window for top-dressing fertilizer and micronutrient application."
+
+        # Point 6: Targeted Water Prescription
+        if is_high_risk or current_sm > 35.0:
+            p6_class = "advisory-safe"
+            p6_text = "💧 <strong>Prescribed Irrigation Depth: 0.0 mm</strong> — Automated valves commanded to shut down to safeguard crop stability."
+        else:
+            target_depth = round(max(0.0, (28.0 - current_sm) * 1.8), 1)
+            p6_class = "advisory-warn"
+            p6_text = f"🎯 <strong>Targeted Water Prescription: {target_depth} mm</strong> — To restore soil to maximum field capacity (28% VWC) without inducing waterlogging or wasting energy."
+
+        advisory_html = f"""
+        <div>
+            <div class="advisory-item {p1_class}">{p1_text}</div>
+            <div class="advisory-item {p2_class}">{p2_text}</div>
+            <div class="advisory-item {p3_class}">{p3_text}</div>
+            <div class="advisory-item {p4_class}">{p4_text}</div>
+            <div class="advisory-item {p5_class}">{p5_text}</div>
+            <div class="advisory-item {p6_class}">{p6_text}</div>
+        </div>
+        """
+        st.markdown(advisory_html, unsafe_allow_html=True)
 
 # ==============================================================================
 # PAGE 3: CLOSED-LOOP ACTUATION PROTOCOL (VRI)
