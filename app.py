@@ -1,6 +1,7 @@
 import streamlit as st
 import ee
-import geemap.foliumap as geemap
+import folium
+from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 import json
 
@@ -12,6 +13,7 @@ st.set_page_config(
 )
 
 # 1. Earth Engine Authentication via Streamlit Secrets
+@st.cache_resource
 def authenticate_gee():
     try:
         service_account_str = st.secrets["GEE_SERVICE_ACCOUNT"]
@@ -23,10 +25,20 @@ def authenticate_gee():
         ee.Initialize(credentials)
         return True
     except Exception as e:
-        st.warning("⚠️ Waiting for Earth Engine Service Key configuration in Streamlit Secrets.")
         return False
 
 gee_ready = authenticate_gee()
+
+# Helper function: Convert any Earth Engine Image into a Folium Tile Layer
+def add_ee_layer(m, ee_image_object, vis_params, name):
+    map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
+    folium.raster_layers.TileLayer(
+        tiles=map_id_dict['tile_fetcher'].url_format,
+        attr='Google Earth Engine / Copernicus',
+        name=name,
+        overlay=True,
+        control=True
+    ).add_to(m)
 
 # 2. Header
 st.title("🌾 AgroSAR: Spaceborne Sub-Canopy Soil Radar & Lodging Prognostics")
@@ -35,7 +47,6 @@ st.caption("Powered by ESA Sentinel-1 C-Band SAR & Sentinel-2 Optical Earth Obse
 # 3. Sidebar: Farmer-Friendly Location & Crop Settings
 st.sidebar.header("📍 Step 1: Select Farm Location")
 
-# Option A: Search by village, district, or PIN code
 search_query = st.sidebar.text_input(
     "Search Village, District, or PIN Code:",
     placeholder="e.g. Burdwan, West Bengal or 713101"
@@ -58,7 +69,6 @@ if search_query:
     except Exception:
         st.sidebar.info("Using coordinate fallback.")
 
-# Scan radius slider
 buffer_km = st.sidebar.slider("Farm Scan Radius (Kilometers):", min_value=2, max_value=12, value=5)
 
 st.sidebar.header("🌾 Step 2: Choose Crop Type")
@@ -79,9 +89,9 @@ run_button = st.sidebar.button("🔍 Scan Farm with Satellite Radar", type="prim
 # 4. Processing Pipeline
 if run_button:
     if not gee_ready:
-        st.error("Please configure your Google Earth Engine Service Account key first.")
+        st.error("⚠️ Earth Engine authentication failed. Please verify that your GEE_SERVICE_ACCOUNT Secret is configured correctly in Streamlit Settings.")
     else:
-        with st.spinner("Acquiring Sentinel-1 microwave radar and Sentinel-2 optical data..."):
+        with st.spinner("🛰️ Retrieving Sentinel-1 C-Band SAR and Sentinel-2 optical data from orbit..."):
             point = ee.Geometry.Point([lon, lat])
             roi = point.buffer(buffer_km * 1000)
 
@@ -103,7 +113,7 @@ if run_button:
             vh_filtered = s1.select('VH').filter(boxcar).rename('VH_filtered')
             s1 = s1.addBands([vv_filtered, vh_filtered])
 
-            # Pull Sentinel-2 Optical (Cloud-masked surface reflectance)
+            # Pull Sentinel-2 Optical (Surface Reflectance)
             def mask_s2_clouds(img):
                 scl = img.select('SCL')
                 mask = scl.eq(4).Or(scl.eq(5)).Or(scl.eq(6))
@@ -128,24 +138,19 @@ if run_button:
             theta_rad = s1.select('angle').multiply(3.14159265 / 180.0)
             cos_theta = theta_rad.cos()
 
-            # Vegetation attenuation factor tau^2
             tau_sq = ndvi.multiply(-2.0 * B).divide(cos_theta).exp()
-
-            # Canopy scattering contribution
             sigma_veg = ndvi.multiply(A).multiply(cos_theta).multiply(ee.Image(1.0).subtract(tau_sq))
-
-            # Isolated soil backscatter
             sigma_soil_linear = sigma_vv_linear.subtract(sigma_veg).divide(tau_sq)
             sigma_soil_db = sigma_soil_linear.log10().multiply(10.0)
 
-            # Estimated sub-canopy volumetric soil moisture (0-50%)
+            # Volumetric soil moisture (0-50%)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # Crop lodging structural risk index (cross-polarization ratio VV/VH * canopy biomass)
+            # Lodging risk index (cross-polarization ratio VV/VH * canopy biomass)
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
             lodging_risk = depol_ratio.multiply(ndvi).rename('Lodging_Risk_Index')
 
-            # Summary metrics
+            # Mean moisture calculation
             mean_sm = soil_moisture.reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
@@ -153,45 +158,46 @@ if run_button:
                 maxPixels=1e6
             ).getInfo().get('Soil_Moisture_Pct', 24.5)
 
-            # 5. Farmer Advisory Cards
+            # 5. Advisory Cards
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("💧 Average Root-Zone Moisture", f"{mean_sm:.1f}%")
                 if mean_sm < 18.0:
                     st.warning("Soil is dry beneath canopy. Irrigation recommended within 24-48 hours.")
                 elif mean_sm > 38.0:
-                    st.info("Soil is near water saturation. Delay irrigation to protect root health.")
+                    st.info("Soil is near saturation. Delay irrigation to protect root anchorage.")
                 else:
                     st.success("Moisture levels are optimal for current vegetative stage.")
 
             with col2:
                 st.metric("⚠️ Pre-Harvest Lodging Threat", "Moderate Risk" if mean_sm > 30 else "Low Risk")
                 if mean_sm > 30:
-                    st.warning("High canopy weight + soft root-bed. Avoid surface water buildup before high-wind events.")
+                    st.warning("High canopy weight + soft root-bed. Avoid surface flooding before windy spells.")
                 else:
                     st.success("Stems and root-bed show stable structural anchorage.")
 
-            # 6. Interactive Map Rendering
+            # 6. Interactive Folium Map
             st.subheader("🗺️ 10-Meter Sub-Canopy Radar Heatmap")
-            m = geemap.Map(center=[lat, lon], zoom=13)
+            m = folium.Map(location=[lat, lon], zoom_start=13, tiles="OpenStreetMap")
 
             sm_vis = {
                 "bands": ["Soil_Moisture_Pct"],
                 "min": 5.0,
                 "max": 45.0,
-                "palette": ["#8c510a", "#d8b365", "#f6e8c3", "#c7eae5", "#5ab4ac", "#01665e"]
+                "palette": ["8c510a", "d8b365", "f6e8c3", "c7eae5", "5ab4ac", "01665e"]
             }
             lodging_vis = {
                 "bands": ["Lodging_Risk_Index"],
                 "min": 2.0,
                 "max": 10.0,
-                "palette": ["#1a9641", "#a6d96a", "#ffffbf", "#fdae61", "#d7191c"]
+                "palette": ["1a9641", "a6d96a", "ffffbf", "fdae61", "d7191c"]
             }
 
-            m.addLayer(ndvi, {"bands": ["NDVI"], "min": 0.0, "max": 0.8, "palette": ["brown", "yellow", "green"]}, "Canopy Greenness (NDVI)")
-            m.addLayer(soil_moisture, sm_vis, "Sub-Canopy Soil Moisture (%)")
-            m.addLayer(lodging_risk, lodging_vis, "Pre-Harvest Lodging Risk")
+            add_ee_layer(m, ndvi, {"bands": ["NDVI"], "min": 0.0, "max": 0.8, "palette": ["brown", "yellow", "green"]}, "Canopy Greenness (NDVI)")
+            add_ee_layer(m, soil_moisture, sm_vis, "Sub-Canopy Soil Moisture (%)")
+            add_ee_layer(m, lodging_risk, lodging_vis, "Pre-Harvest Lodging Risk")
 
-            m.to_streamlit(height=580)
+            folium.LayerControl().add_to(m)
+            st_folium(m, width=900, height=550)
 else:
     st.info("👈 Enter your village name or PIN code in the sidebar and click **Scan Farm with Satellite Radar** to begin.")
