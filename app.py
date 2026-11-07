@@ -4,6 +4,7 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 import json
+from datetime import datetime, timedelta
 
 # Page configuration
 st.set_page_config(
@@ -30,7 +31,7 @@ def authenticate_gee():
 
 gee_ready, auth_error = authenticate_gee()
 
-# Helper function: Convert any Earth Engine Image into a Folium Tile Layer safely
+# Helper function: Add GEE layer to Folium cleanly
 def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
     try:
         map_id_dict = ee.Image(ee_image_object).visualize(**vis_params).getMapId()
@@ -49,13 +50,13 @@ def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
 st.title("🌾 AgroSAR: Spaceborne Sub-Canopy Soil Radar & Lodging Prognostics")
 st.caption("Powered by ESA Sentinel-1 C-Band SAR & Sentinel-2 Optical Earth Observation")
 
-# Initialize session state for persistent results across map renders
+# Initialize session state
 if "scan_performed" not in st.session_state:
     st.session_state["scan_performed"] = False
 if "scan_params" not in st.session_state:
     st.session_state["scan_params"] = None
 
-# 3. Sidebar: Farmer-Friendly Location & Crop Settings
+# 3. Sidebar
 st.sidebar.header("📍 Step 1: Select Farm Location")
 
 search_query = st.sidebar.text_input(
@@ -64,13 +65,13 @@ search_query = st.sidebar.text_input(
     placeholder="e.g. Burdwan, West Bengal or 713101"
 )
 
-# Default coordinates (Kuttanad paddy bowl, Kerala)
+# Default coordinates
 lat = 9.4214
 lon = 76.4880
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v6", timeout=5)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_speed", timeout=4)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -89,7 +90,6 @@ crop_type = st.sidebar.selectbox(
     ["Paddy / Rice (धान)", "Wheat (गेहूँ)", "Maize (मक्का)"]
 )
 
-# Biophysical scattering presets for Water Cloud Model
 crop_params = {
     "Paddy / Rice (धान)": {"A": 0.0014, "B": 0.145},
     "Wheat (गेहूँ)": {"A": 0.0011, "B": 0.125},
@@ -116,47 +116,72 @@ if st.session_state["scan_performed"]:
         c_buffer = params["buffer_km"]
         c_crop = params["crop_type"]
 
-        with st.spinner("🛰️ Retrieving Sentinel-1 C-Band SAR and Sentinel-2 optical data from orbit..."):
+        with st.spinner("⚡ Retrieving satellite radar and computing sub-canopy dynamics..."):
             point = ee.Geometry.Point([c_lon, c_lat])
             roi = point.buffer(c_buffer * 1000)
 
-            # Sentinel-1 SAR Collection (IW mode, dual-polarization)
+            # Fast 60-day temporal bounds to avoid scanning the entire archive
+            now = datetime.now()
+            start_date = (now - timedelta(days=60)).strftime('%Y-%m-%d')
+            end_date = now.strftime('%Y-%m-%d')
+
+            # Sentinel-1 SAR (IW mode, dual-polarization)
             s1_coll = (
+                ee.ImageCollection('COPERNICUS/S1_GRD')
+                .filterBounds(roi)
+                .filterDate(start_date, end_date)
+                .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+                .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+                .filter(ee.Filter.eq('instrumentMode', 'IW'))
+                .limit(5)
+            )
+
+            # Fallback if recent 60-day swath is sparse
+            s1_coll_fallback = (
                 ee.ImageCollection('COPERNICUS/S1_GRD')
                 .filterBounds(roi)
                 .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
                 .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
                 .filter(ee.Filter.eq('instrumentMode', 'IW'))
                 .sort('system:time_start', False)
-                .limit(15)
+                .limit(4)
             )
 
-            s1 = s1_coll.median().clip(roi)
+            s1 = ee.Image(ee.Algorithms.If(
+                s1_coll.size().gt(0),
+                s1_coll.median(),
+                s1_coll_fallback.median()
+            )).clip(roi)
 
-            # Spatial speckle filtering
-            boxcar = ee.Kernel.square(radius=3, units='pixels')
+            # Fast 3x3 convolution
+            boxcar = ee.Kernel.square(radius=2, units='pixels')
             vv_filtered = s1.select('VV').convolve(boxcar).rename('VV_filtered')
             vh_filtered = s1.select('VH').convolve(boxcar).rename('VH_filtered')
             s1 = s1.addBands([vv_filtered, vh_filtered])
 
             # Sentinel-2 Harmonized Surface Reflectance
-            def mask_s2_clouds(img):
-                qa = img.select('QA60')
-                cloud_bit_mask = 1 << 10
-                cirrus_bit_mask = 1 << 11
-                mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-                return img.updateMask(mask)
-
             s2_coll = (
+                ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                .filterBounds(roi)
+                .filterDate(start_date, end_date)
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
+                .limit(4)
+            )
+
+            s2_coll_fallback = (
                 ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                 .filterBounds(roi)
                 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
                 .sort('system:time_start', False)
-                .limit(10)
-                .map(mask_s2_clouds)
+                .limit(3)
             )
 
-            s2 = s2_coll.median().clip(roi)
+            s2 = ee.Image(ee.Algorithms.If(
+                s2_coll.size().gt(0),
+                s2_coll.median(),
+                s2_coll_fallback.median()
+            )).clip(roi)
+
             ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI').clamp(0.0, 1.0)
 
             # Water Cloud Model (WCM) Inversion
@@ -175,16 +200,17 @@ if st.session_state["scan_performed"]:
             # Volumetric soil moisture estimation (%)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # Pre-harvest lodging vulnerability index: (VV - VH) * NDVI
+            # Pre-harvest lodging vulnerability index
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
             lodging_risk = depol_ratio.multiply(ndvi).rename('Lodging_Risk_Index')
 
-            # Compute regional zonal statistics
+            # Fast regional zonal stats calculation at scale=100
             stats = soil_moisture.addBands(lodging_risk).reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
-                scale=60,
-                maxPixels=1e6
+                scale=100,
+                maxPixels=5e5,
+                bestEffort=True
             ).getInfo()
 
             mean_sm = stats.get('Soil_Moisture_Pct')
@@ -223,7 +249,6 @@ if st.session_state["scan_performed"]:
         # 6. Interactive Folium Map
         st.subheader("🗺️ 10-Meter Sub-Canopy Radar Heatmap")
         
-        # Injected CSS to prevent layer control text truncation
         st.markdown(
             """
             <style>
@@ -265,14 +290,13 @@ if st.session_state["scan_performed"]:
             "palette": ["#8c510a", "#ffffbf", "#1b7837"]
         }
 
-        # Add layers with Soil Moisture pre-checked and NDVI unchecked by default
+        # Sub-Canopy Soil Moisture is active by default; others load on selection
         add_ee_layer(m, soil_moisture, sm_vis, "Soil Moisture (%)", show=True)
         add_ee_layer(m, lodging_risk, lodging_vis, "Lodging Risk Index", show=False)
         add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)", show=False)
 
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
 
-        # Responsive full container width
         st_folium(m, use_container_width=True, height=520, returned_objects=[])
 
 else:
