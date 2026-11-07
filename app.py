@@ -4,6 +4,7 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 import json
+from datetime import datetime, timedelta
 
 # Page configuration
 st.set_page_config(
@@ -30,16 +31,19 @@ def authenticate_gee():
 
 gee_ready, auth_error = authenticate_gee()
 
-# Helper function: Convert any Earth Engine Image into a Folium Tile Layer
+# Helper function: Convert any Earth Engine Image into a Folium Tile Layer safely
 def add_ee_layer(m, ee_image_object, vis_params, name):
-    map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
-    folium.raster_layers.TileLayer(
-        tiles=map_id_dict['tile_fetcher'].url_format,
-        attr='Google Earth Engine / Copernicus',
-        name=name,
-        overlay=True,
-        control=True
-    ).add_to(m)
+    try:
+        map_id_dict = ee.Image(ee_image_object).visualize(**vis_params).getMapId()
+        folium.raster_layers.TileLayer(
+            tiles=map_id_dict['tile_fetcher'].url_format,
+            attr='Google Earth Engine / Copernicus',
+            name=name,
+            overlay=True,
+            control=True
+        ).add_to(m)
+    except Exception as e:
+        st.warning(f"Could not render layer '{name}': {e}")
 
 # 2. Header
 st.title("🌾 AgroSAR: Spaceborne Sub-Canopy Soil Radar & Lodging Prognostics")
@@ -60,7 +64,7 @@ lon = 83.0645
 
 if search_query:
     try:
-        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v2", timeout=5)
+        geolocator = Nominatim(user_agent="agrosar_farm_assistant_v3", timeout=5)
         location = geolocator.geocode(search_query + ", India")
         if location:
             lat = location.latitude
@@ -97,39 +101,43 @@ if run_button:
             point = ee.Geometry.Point([lon, lat])
             roi = point.buffer(buffer_km * 1000)
 
-            # Pull Sentinel-1 SAR (Dual-Pol VV + VH)
-            s1 = (
+            # Sentinel-1 SAR Collection (IW mode, dual-polarization)
+            s1_coll = (
                 ee.ImageCollection('COPERNICUS/S1_GRD')
                 .filterBounds(roi)
                 .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
                 .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
                 .filter(ee.Filter.eq('instrumentMode', 'IW'))
-                .limit(10)
-                .median()
-                .clip(roi)
+                .sort('system:time_start', False)
+                .limit(15)
             )
 
-            # Spatial speckle filter using convolve
+            s1 = s1_coll.median().clip(roi)
+
+            # Spatial speckle filtering
             boxcar = ee.Kernel.square(radius=3, units='pixels')
             vv_filtered = s1.select('VV').convolve(boxcar).rename('VV_filtered')
             vh_filtered = s1.select('VH').convolve(boxcar).rename('VH_filtered')
             s1 = s1.addBands([vv_filtered, vh_filtered])
 
-            # Pull Sentinel-2 Optical (Surface Reflectance)
+            # Sentinel-2 Harmonized Surface Reflectance
             def mask_s2_clouds(img):
-                scl = img.select('SCL')
-                mask = scl.eq(4).Or(scl.eq(5)).Or(scl.eq(6))
+                qa = img.select('QA60')
+                cloud_bit_mask = 1 << 10
+                cirrus_bit_mask = 1 << 11
+                mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
                 return img.updateMask(mask)
 
-            s2 = (
+            s2_coll = (
                 ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                 .filterBounds(roi)
-                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
-                .map(mask_s2_clouds)
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
+                .sort('system:time_start', False)
                 .limit(10)
-                .median()
-                .clip(roi)
+                .map(mask_s2_clouds)
             )
+
+            s2 = s2_coll.median().clip(roi)
             ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
             # Water Cloud Model (WCM) Inversion
@@ -145,21 +153,22 @@ if run_button:
             sigma_soil_linear = sigma_vv_linear.subtract(sigma_veg).divide(tau_sq)
             sigma_soil_db = sigma_soil_linear.log10().multiply(10.0)
 
-            # Volumetric soil moisture (0-50%)
+            # Volumetric soil moisture estimation (%)
             soil_moisture = sigma_soil_db.multiply(2.8).add(45.0).clamp(0.0, 50.0).rename('Soil_Moisture_Pct')
 
-            # Lodging risk index (cross-polarization ratio VV/VH * canopy biomass)
+            # Pre-harvest lodging vulnerability index
             depol_ratio = s1.select('VV_filtered').subtract(s1.select('VH_filtered')).rename('Depol_Ratio')
             lodging_risk = depol_ratio.multiply(ndvi).rename('Lodging_Risk_Index')
 
-            # Mean moisture calculation
-            mean_sm = soil_moisture.reduceRegion(
+            # Compute mean moisture over the ROI
+            mean_stats = soil_moisture.reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
-                scale=30,
+                scale=60,
                 maxPixels=1e6
-            ).getInfo().get('Soil_Moisture_Pct', 24.5)
+            ).getInfo()
 
+            mean_sm = mean_stats.get('Soil_Moisture_Pct')
             if mean_sm is None:
                 mean_sm = 24.5
 
@@ -197,8 +206,14 @@ if run_button:
                 "max": 10.0,
                 "palette": ["1a9641", "a6d96a", "ffffbf", "fdae61", "d7191c"]
             }
+            ndvi_vis = {
+                "bands": ["NDVI"],
+                "min": 0.0,
+                "max": 0.8,
+                "palette": ["#8c510a", "#ffffbf", "#1b7837"]
+            }
 
-            add_ee_layer(m, ndvi, {"bands": ["NDVI"], "min": 0.0, "max": 0.8, "palette": ["brown", "yellow", "green"]}, "Canopy Greenness (NDVI)")
+            add_ee_layer(m, ndvi, ndvi_vis, "Canopy Greenness (NDVI)")
             add_ee_layer(m, soil_moisture, sm_vis, "Sub-Canopy Soil Moisture (%)")
             add_ee_layer(m, lodging_risk, lodging_vis, "Pre-Harvest Lodging Risk")
 
