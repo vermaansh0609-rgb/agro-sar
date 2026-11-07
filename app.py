@@ -72,9 +72,19 @@ st.markdown(
         margin-bottom: 24px;
     }
     
+    .hud-grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        margin-bottom: 20px;
+    }
+    
     @media (max-width: 900px) {
         .hud-grid {
             grid-template-columns: repeat(2, 1fr);
+        }
+        .hud-grid-3 {
+            grid-template-columns: 1fr;
         }
     }
     
@@ -143,6 +153,17 @@ st.markdown(
         line-height: 1.15;
         white-space: normal;
         word-break: break-word;
+    }
+
+    .hud-card-value-cmd {
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: #00f0ff;
+        font-family: monospace;
+        margin: 8px 0;
+        line-height: 1.25;
+        white-space: normal;
+        word-break: break-all;
     }
 
     .hud-pill {
@@ -315,7 +336,7 @@ if page == "🚀 Mission Briefing & Guide":
 # PAGE 2: RADAR ANALYSIS & MONITORING CANVAS (Includes Target Uplink Console)
 # ==============================================================================
 elif page == "🗺️ Radar Analysis Canvas":
-    # Target Coordinate Uplink Control Console (Moved from Sidebar)
+    # Target Coordinate Uplink Control Console
     with st.expander("📍 Target Coordinate Uplink & Radar Parameters", expanded=not st.session_state["scan_performed"]):
         col_gps, col_search, col_crop, col_radius = st.columns([1.2, 1.6, 1.2, 1.2])
 
@@ -513,7 +534,6 @@ elif page == "🗺️ Radar Analysis Canvas":
                     }
                     st.rerun()
 
-    # Re-fetch session results after scan
     res = st.session_state["scan_results"]
 
     if not res:
@@ -647,7 +667,7 @@ elif page == "🗺️ Radar Analysis Canvas":
         st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
-# PAGE 3: CLOSED-LOOP ACTUATION PROTOCOL (VRI)
+# PAGE 3: CLOSED-LOOP ACTUATION PROTOCOL (VRI) - Fixed Truncation
 # ==============================================================================
 elif page == "⚡ Actuation Protocol (VRI)":
     if not res:
@@ -663,13 +683,38 @@ elif page == "⚡ Actuation Protocol (VRI)":
             unsafe_allow_html=True
         )
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Command Mode", res["valve_command"])
-        with c2:
-            st.metric("PWM Solenoid Duty", f"{res['duty_cycle']}%")
-        with c3:
-            st.metric("Hydraulic Lockout", "ACTIVE" if res["lockout"] else "INACTIVE")
+        lockout_status = "ACTIVE" if res["lockout"] else "INACTIVE"
+        lockout_pill = "pill-red" if res["lockout"] else "pill-green"
+        lockout_desc = "Emergency Inhibit: Water discharge locked out." if res["lockout"] else "Normal Operation: Solenoid circuits authorized."
+
+        vri_cards_html = f"""
+        <div class="hud-grid-3">
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">⚙️ Command Mode</div>
+                    <div class="hud-card-value-cmd">{res['valve_command']}</div>
+                </div>
+                <div class="hud-pill pill-blue">ISO 11783-10 Actuation Vector</div>
+            </div>
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">⚡ PWM Solenoid Duty</div>
+                    <div class="hud-card-value">{res['duty_cycle']}%</div>
+                </div>
+                <div class="hud-pill pill-amber">Target Depth: {res['app_depth_mm']} mm</div>
+            </div>
+            <div class="hud-card">
+                <div>
+                    <div class="hud-card-label">🛡️ Hydraulic Lockout</div>
+                    <div class="hud-card-value" style="color: {'#ff3b5c' if res['lockout'] else '#00ff9d'};">
+                        {lockout_status}
+                    </div>
+                </div>
+                <div class="hud-pill {lockout_pill}">{lockout_desc}</div>
+            </div>
+        </div>
+        """
+        st.markdown(vri_cards_html, unsafe_allow_html=True)
 
         telemetry_payload = {
             "protocol_standard": "ISO-11783-10:2026-VRI",
