@@ -798,15 +798,15 @@ if page == "🏠 HomePage":
         """
         <div class="mission-box">
             <h3 style="color: #1E3F20; margin-top:0;">🌾 Operational Overview</h3>
-            <p><strong>AgroSAR</strong> is a spaceborne radar monitoring and variable-rate actuation infrastructure designed to invert sub-canopy root-zone soil hydrology without relying on physical ground probes or expensive in-field IoT hardware.</p>
-            <p>Conventional optical vegetation indices (like NDVI) only evaluate top-canopy greenness and are blind to subterranean root waterlogging or hidden moisture deficits. AgroSAR fuses <strong>ESA Sentinel-1 C-band synthetic aperture radar (SAR)</strong>, <strong>Sentinel-2 multispectral imagery</strong>, and <strong>ECMWF ERA5-Land 10m wind reanalysis</strong> to penetrate dense crop foliage, decoupling soil dielectric moisture from plowed surface roughness.</p>
-            <p>Beyond root moisture mapping, AgroSAR solves real-time <strong>biomechanical stalk lodging risk</strong> (predicting when soggy soil and high winds will flatten standing Paddy, Wheat, or Maize), delivers 8-day depletion forecasts with irrigation advisories translated into <strong>11 regional Indian languages</strong>, and generates <strong>ISOBUS ISO 11783-10</strong> machine control telemetry alongside formal field audit reports.</p>
+            <p><strong>AgroSAR</strong> checks how much water is in the soil around plant roots using satellite signals from space—without needing any sensors or wires inside the farm.</p>
+            <p>Normal farm maps only show how green the top leaves look, so they can miss dry roots or waterlogged soil underneath. AgroSAR combines <strong>Sentinel-1 radar satellites</strong>, <strong>Sentinel-2 crop images</strong>, and <strong>wind data</strong> to see through plant leaves and tell real soil wetness apart from bumpy, plowed ground.</p>
+            <p>It also warns if strong wind and wet soil might push standing <strong>Paddy, Wheat, or Maize</strong> flat, shows how fast soil will dry over the next 8 days with watering tips in <strong>11 Indian languages</strong>, and creates simple pump instructions plus a printable field report.</p>
             <div class="overview-badges">
-                <span class="overview-badge">🛰️ 10m Multi-Satellite Fusion</span>
-                <span class="overview-badge">🔌 Zero Ground Sensors Required</span>
-                <span class="overview-badge">🌾 Root-Zone Moisture & Lodging Guard</span>
+                <span class="overview-badge">🛰️ 10m Satellite View</span>
+                <span class="overview-badge">🔌 No Field Sensors Needed</span>
+                <span class="overview-badge">🌾 Root Water & Crop Fall Guard</span>
                 <span class="overview-badge">🗣️ 11 Indian Languages</span>
-                <span class="overview-badge">⚡ ISOBUS ISO 11783-10 Ready</span>
+                <span class="overview-badge">⚡ Smart Pump Ready</span>
             </div>
         </div>
         """,
@@ -818,11 +818,11 @@ if page == "🏠 HomePage":
         st.markdown(
             """
             <div class="hud-card">
-                <div class="hud-card-label">🛰️ Core Sensor Array</div>
+                <div class="hud-card-label">🛰️ Satellite & Weather Data</div>
                 <div style="color: #1E3F20; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
-- <strong>Sentinel-1 C-SAR:</strong> 10m spatial resolution dual-polarization backscatter (VV / VH).<br>
-- <strong>Sentinel-2 MSI:</strong> 10m multispectral greenness for Water Cloud canopy attenuation.<br>
-- <strong>ECMWF ERA5-Land:</strong> Live 10m surface atmospheric wind reanalysis.
+- <strong>Sentinel-1 Radar:</strong> Sees through clouds and leaves every 10m to measure soil moisture.<br>
+- <strong>Sentinel-2 Images:</strong> Checks leaf greenness so thick plants don't confuse the reading.<br>
+- <strong>Live Wind Data:</strong> Tracks wind speed near the ground across your field.
                 </div>
             </div>
             """,
@@ -832,11 +832,11 @@ if page == "🏠 HomePage":
         st.markdown(
             """
             <div class="hud-card">
-                <div class="hud-card-label">⚙️ Algorithmic Inversion</div>
+                <div class="hud-card-label">⚙️ How We Read the Field</div>
                 <div style="color: #1E3F20; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
-- <strong>Cross-Pol Decoupling:</strong> Isolates surface soil roughness via cross-polarization ratio (VH / VV).<br>
-- <strong>Water Cloud Inversion:</strong> Eliminates canopy scattering to compute true soil permittivity.<br>
-- <strong>Biomechanical Lodging:</strong> Solves aerodynamic drag torque vs. root anchorage resistance.
+- <strong>Plowed Ground Check:</strong> Ignores bumps and dirt ridges so rough soil looks accurate.<br>
+- <strong>Leaf Filter:</strong> Separates plant leaves from the soil below to find true root moisture.<br>
+- <strong>Crop Fall Check:</strong> Compares wind push against wet roots to spot bending or falling crops.
                 </div>
             </div>
             """,
@@ -846,11 +846,11 @@ if page == "🏠 HomePage":
         st.markdown(
             """
             <div class="hud-card">
-                <div class="hud-card-label">⚡ Autonomous Actuation</div>
+                <div class="hud-card-label">⚡ Smart Watering Help</div>
                 <div style="color: #1E3F20; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
-- <strong>ISOBUS Standard:</strong> Outputs ISO 11783-10 compliant JSON machine telemetry.<br>
-- <strong>Hydraulic Lockout:</strong> Halts irrigation automatically during elevated lodging risks.<br>
-- <strong>Zero Hardware Overhead:</strong> Operates entirely via cloud-hosted satellite processing.
+- <strong>Pump Signals:</strong> Creates ready-to-use watering instructions for farm controllers.<br>
+- <strong>Auto Safety Stop:</strong> Advises stopping water during strong winds so wet crops don't topple.<br>
+- <strong>Works From Anywhere:</strong> Runs online from satellites with zero field gadgets to maintain.
                 </div>
             </div>
             """,
