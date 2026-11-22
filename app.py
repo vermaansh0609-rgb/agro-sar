@@ -5,6 +5,8 @@ from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 import requests
 import json
+import time
+import re
 from datetime import datetime
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
@@ -94,17 +96,55 @@ def resolve_location_cached(query_str: str):
     return None
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def translate_advisories_cached(texts_tuple: tuple, target_lang_code: str):
+def _translate_single_success(clean_text: str, target_lang_code: str):
+    try:
+        resp = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={
+                "client": "gtx",
+                "sl": "en",
+                "tl": target_lang_code,
+                "dt": "t",
+                "q": clean_text
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=6
+        )
+        if resp.status_code == 200:
+            payload = resp.json()
+            if isinstance(payload, list) and payload and isinstance(payload[0], list):
+                joined = "".join([seg[0] for seg in payload[0] if seg and seg[0]])
+                if joined and joined.strip().lower() != clean_text.strip().lower():
+                    return joined.strip()
+    except Exception:
+        pass
+
+    try:
+        res_txt = GoogleTranslator(source="en", target=target_lang_code).translate(clean_text)
+        if res_txt and res_txt.strip().lower() != clean_text.strip().lower():
+            return res_txt.strip()
+    except Exception:
+        pass
+
+    return None
+
+def translate_advisories_list(texts_list, target_lang_code: str):
     if target_lang_code == "en":
-        return list(texts_tuple)
-    translated_list = []
-    translator = GoogleTranslator(source="en", target=target_lang_code)
-    for item in texts_tuple:
-        try:
-            translated_list.append(translator.translate(item))
-        except Exception:
-            translated_list.append(item)
-    return translated_list
+        return list(texts_list)
+    output = []
+    for item in texts_list:
+        parts = item.split(" ", 1)
+        if len(parts) == 2 and not parts[0][0].isalnum():
+            emoji_prefix, body = parts[0], parts[1]
+        else:
+            emoji_prefix, body = "", item
+        sanitized_body = re.sub(r"\s*\([^A-Za-z0-9.,%+\-/ ]+\)", "", body).strip()
+        translated_body = _translate_single_success(sanitized_body, target_lang_code)
+        if translated_body:
+            output.append(f"{emoji_prefix} {translated_body}".strip())
+        else:
+            output.append(item)
+    return output
 
 if "splash_seen" not in st.session_state:
     st.session_state["splash_seen"] = False
@@ -138,6 +178,7 @@ if "gps_lat" in query_params and "gps_lon" in query_params:
             st.session_state["field_address"] = f"Live Field GPS Lock ({q_lat:.4f}° N, {q_lon:.4f}° E)"
             st.session_state["gps_override_active"] = True
             st.session_state["active_page"] = "🗺️ Radar Analysis Canvas"
+            st.session_state["splash_seen"] = True
             st.query_params.clear()
     except Exception:
         st.query_params.clear()
@@ -150,64 +191,118 @@ st.markdown(
     }
 
     .stApp {
-        background: linear-gradient(180deg, #f4f7f1 0%, #ebe5d8 100%) !important;
-        color: #1f2d1f !important;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        background-color: #F8FAFC !important;
+        color: #0F172A !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Devanagari", "Noto Sans Bengali", sans-serif;
+    }
+
+    .stApp p, .stApp li, .stApp span, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+        color: #0F172A;
     }
 
     .agro-brand-bar {
         display: flex;
         align-items: center;
-        gap: 14px;
-        padding: 8px 4px 12px 4px;
-        margin-bottom: 6px;
-        border-bottom: 2px solid rgba(45, 106, 79, 0.18);
+        gap: 18px;
+        padding: 10px 4px 16px 4px;
+        margin-bottom: 10px;
+        border-bottom: 2px solid #CBD5E1;
     }
 
     .agro-title {
-        font-size: 2.25rem;
+        font-size: 3.1rem;
         font-weight: 900;
-        letter-spacing: 0.02em;
-        background: linear-gradient(90deg, #1b4332 0%, #2d6a4f 55%, #b68900 100%);
+        letter-spacing: 0.025em;
+        background: linear-gradient(90deg, #15803D 0%, #0284C7 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        line-height: 1.1;
+        line-height: 1.08;
+    }
+
+    .stButton > button {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+        border: 1.5px solid #CBD5E1 !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+        transition: all 0.22s ease !important;
+    }
+    .stButton > button p, .stButton > button span {
+        color: #0F172A !important;
+    }
+    .stButton > button:hover {
+        background-color: #F1F5F9 !important;
+        border-color: #15803D !important;
+        color: #15803D !important;
+        transform: translateY(-1px);
+    }
+    .stButton > button:hover p, .stButton > button:hover span {
+        color: #15803D !important;
     }
 
     div[data-testid="stHorizontalBlock"] .stButton > button {
-        background: rgba(255, 255, 255, 0.82);
-        color: #1b4332;
-        border: 1px solid rgba(45, 106, 79, 0.25);
-        border-radius: 999px;
-        padding: 0.45rem 0.95rem;
-        font-weight: 600;
-        font-size: 0.88rem;
-        box-shadow: 0 2px 6px rgba(27, 67, 50, 0.06);
-        transition: all 0.25s ease;
-    }
-    div[data-testid="stHorizontalBlock"] .stButton > button:hover {
-        background: #2d6a4f;
-        color: #ffffff;
-        border-color: #2d6a4f;
-        transform: translateY(-1px);
-    }
-    div[data-testid="stHorizontalBlock"] .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2d6a4f 0%, #40916c 100%) !important;
-        color: #ffffff !important;
-        border: 1px solid #1b4332 !important;
-        box-shadow: 0 4px 12px rgba(45, 106, 79, 0.28) !important;
+        border-radius: 999px !important;
+        padding: 0.48rem 0.95rem !important;
+        font-size: 0.88rem !important;
     }
 
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2d6a4f 0%, #52796f 100%);
-        color: #ffffff;
-        border: none;
-        border-radius: 10px;
-        font-weight: 700;
-        box-shadow: 0 4px 14px rgba(45, 106, 79, 0.25);
+    .stButton > button[kind="primary"],
+    div[data-testid="stHorizontalBlock"] .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #15803D 0%, #0284C7 100%) !important;
+        color: #FFFFFF !important;
+        border: 1.5px solid #15803D !important;
+        box-shadow: 0 4px 12px rgba(21, 128, 61, 0.24) !important;
+    }
+    .stButton > button[kind="primary"] p,
+    .stButton > button[kind="primary"] span,
+    div[data-testid="stHorizontalBlock"] .stButton > button[kind="primary"] p,
+    div[data-testid="stHorizontalBlock"] .stButton > button[kind="primary"] span {
+        color: #FFFFFF !important;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%);
+        background: linear-gradient(135deg, #166534 0%, #0369A1 100%) !important;
+        color: #FFFFFF !important;
+    }
+
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #15803D 0%, #0284C7 100%) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+    }
+    .stDownloadButton > button p, .stDownloadButton > button span {
+        color: #FFFFFF !important;
+    }
+
+    div[data-testid="stExpander"] {
+        background-color: #F1F5F9 !important;
+        border: 1.5px solid #CBD5E1 !important;
+        border-radius: 12px !important;
+    }
+    div[data-testid="stExpander"] summary {
+        background-color: #F1F5F9 !important;
+        color: #0F172A !important;
+        font-weight: 700 !important;
+    }
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+        border: 1.5px solid #CBD5E1 !important;
+        border-radius: 8px !important;
+    }
+    div[data-baseweb="select"] span,
+    div[data-baseweb="input"] input {
+        color: #0F172A !important;
+    }
+    ul[data-baseweb="menu"] {
+        background-color: #FFFFFF !important;
+        border: 1px solid #CBD5E1 !important;
+    }
+    ul[data-baseweb="menu"] li {
+        color: #0F172A !important;
     }
 
     .hud-grid {
@@ -232,24 +327,24 @@ st.markdown(
     }
 
     .hud-card {
-        background: #ffffff;
-        border: 1.5px solid rgba(45, 106, 79, 0.24);
+        background: #FFFFFF;
+        border: 1.5px solid #CBD5E1;
         border-radius: 14px;
         padding: 18px 16px;
         position: relative;
-        box-shadow: 0 6px 20px rgba(62, 47, 28, 0.08);
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
         display: flex;
         flex-direction: column;
         justify-content: space-between;
         min-height: 185px;
-        transition: transform 0.28s ease, box-shadow 0.28s ease, border-color 0.28s ease;
+        transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
         cursor: pointer;
     }
 
     .hud-card:hover {
         transform: translateY(-4px);
-        border-color: #d4a373;
-        box-shadow: 0 12px 28px rgba(45, 106, 79, 0.18);
+        border-color: #0284C7;
+        box-shadow: 0 12px 26px rgba(2, 132, 199, 0.14);
         z-index: 30;
     }
 
@@ -259,7 +354,7 @@ st.markdown(
         top: 0; left: 16px; right: 16px;
         height: 4px;
         border-radius: 0 0 4px 4px;
-        background: linear-gradient(90deg, #2d6a4f, #e9c46a);
+        background: linear-gradient(90deg, #15803D, #0284C7);
     }
 
     .hover-popup {
@@ -270,11 +365,11 @@ st.markdown(
         left: 50%;
         transform: translateX(-50%) translateY(8px);
         width: 270px;
-        background: #fffdf8;
-        border: 2px solid #2d6a4f;
+        background: #FFFFFF;
+        border: 2px solid #0284C7;
         border-radius: 14px;
         padding: 12px 14px;
-        box-shadow: 0 14px 32px rgba(27, 67, 50, 0.25);
+        box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
         z-index: 999;
         transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
         pointer-events: none;
@@ -289,7 +384,7 @@ st.markdown(
         margin-left: -8px;
         border-width: 8px;
         border-style: solid;
-        border-color: #2d6a4f transparent transparent transparent;
+        border-color: #0284C7 transparent transparent transparent;
     }
 
     .hud-card:hover .hover-popup {
@@ -299,17 +394,17 @@ st.markdown(
     }
 
     .popup-title {
-        font-size: 0.82rem;
+        font-size: 0.84rem;
         font-weight: 800;
-        color: #1b4332;
+        color: #0F172A;
         margin-top: 6px;
         margin-bottom: 3px;
     }
 
     .popup-caption {
-        font-size: 0.74rem;
-        color: #4a554a;
-        line-height: 1.32;
+        font-size: 0.75rem;
+        color: #334155;
+        line-height: 1.35;
     }
 
     .profile-popup {
@@ -319,12 +414,12 @@ st.markdown(
         bottom: calc(100% + 12px);
         left: 50%;
         transform: translateX(-50%) translateY(8px);
-        width: 310px;
-        background: #fffdf8;
-        border: 2px solid #2d6a4f;
+        width: 315px;
+        background: #FFFFFF;
+        border: 2px solid #15803D;
         border-radius: 14px;
         padding: 14px 16px;
-        box-shadow: 0 14px 34px rgba(27, 67, 50, 0.25);
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
         z-index: 999;
         transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
         pointer-events: none;
@@ -339,7 +434,7 @@ st.markdown(
         margin-left: -8px;
         border-width: 8px;
         border-style: solid;
-        border-color: #2d6a4f transparent transparent transparent;
+        border-color: #15803D transparent transparent transparent;
     }
 
     .hud-card:hover .profile-popup {
@@ -349,28 +444,28 @@ st.markdown(
     }
 
     .profile-row {
-        font-size: 0.78rem;
-        color: #2d3a2d;
+        font-size: 0.79rem;
+        color: #0F172A;
         margin-bottom: 4px;
-        line-height: 1.35;
+        line-height: 1.38;
     }
 
     .profile-badge {
         display: inline-block;
-        background: #e9f5db;
-        color: #1b4332;
+        background: #F1F5F9;
+        color: #15803D;
         font-weight: 700;
         font-size: 0.72rem;
-        padding: 2px 8px;
+        padding: 3px 9px;
         border-radius: 999px;
         margin-bottom: 6px;
-        border: 1px solid #95d5b2;
+        border: 1px solid #CBD5E1;
     }
 
     .hud-card-name {
         font-size: 1.3rem;
         font-weight: 800;
-        color: #1b4332;
+        color: #0F172A;
         margin: auto 0;
         letter-spacing: 0.03em;
     }
@@ -380,7 +475,7 @@ st.markdown(
         font-weight: 700;
         letter-spacing: 0.06em;
         text-transform: uppercase;
-        color: #5c4d3c;
+        color: #334155;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -389,7 +484,7 @@ st.markdown(
     .hud-card-value {
         font-size: 1.85rem;
         font-weight: 800;
-        color: #1b4332;
+        color: #0F172A;
         margin: 8px 0 4px 0;
         line-height: 1.15;
     }
@@ -397,7 +492,7 @@ st.markdown(
     .hud-card-value-cmd {
         font-size: clamp(0.88rem, 1.08vw, 1.05rem);
         font-weight: 800;
-        color: #2d6a4f;
+        color: #0284C7;
         font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
         margin: 10px 0 6px 0;
         line-height: 1.25;
@@ -409,7 +504,7 @@ st.markdown(
 
     .card-explainer {
         font-size: 0.76rem;
-        color: #526052;
+        color: #475569;
         margin-bottom: 10px;
         line-height: 1.35;
     }
@@ -423,61 +518,62 @@ st.markdown(
     }
 
     .pill-green {
-        background: #e9f5db;
-        border: 1px solid #95d5b2;
-        color: #1b4332;
+        background: rgba(34, 197, 94, 0.14);
+        border: 1px solid #22C55E;
+        color: #14532D;
     }
 
     .pill-amber {
-        background: #fefae0;
-        border: 1px solid #e9c46a;
-        color: #8c5a00;
+        background: rgba(245, 158, 11, 0.15);
+        border: 1px solid #F59E0B;
+        color: #78350F;
     }
 
     .pill-red {
-        background: #fde8e8;
-        border: 1px solid #f8b4b4;
-        color: #9b1c1c;
+        background: rgba(239, 68, 68, 0.14);
+        border: 1px solid #EF4444;
+        color: #7F1D1D;
     }
 
     .pill-blue {
-        background: #e0f2fe;
-        border: 1px solid #7dd3fc;
-        color: #075985;
+        background: rgba(59, 130, 246, 0.14);
+        border: 1px solid #3B82F6;
+        color: #1E3A8A;
     }
 
     .mission-box {
-        background: rgba(255, 255, 255, 0.88);
-        border: 1.5px solid rgba(45, 106, 79, 0.22);
+        background: #FFFFFF;
+        border: 1.5px solid #CBD5E1;
         border-radius: 14px;
         padding: 20px 22px;
         margin-bottom: 20px;
-        box-shadow: 0 4px 16px rgba(62, 47, 28, 0.06);
-        color: #1f2d1f;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+        color: #0F172A;
     }
 
     .advisory-item {
-        background: #ffffff;
-        border-left: 4px solid #2d6a4f;
-        padding: 12px 16px;
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-left: 5px solid #15803D;
+        padding: 13px 16px;
         margin-bottom: 10px;
         border-radius: 0 10px 10px 0;
-        font-size: 0.9rem;
-        line-height: 1.5;
-        color: #1f2d1f;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        font-size: 0.94rem;
+        line-height: 1.55;
+        color: #0F172A;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
     }
     .advisory-alert {
-        border-left-color: #c1121f;
-        background: #fff5f5;
+        border-left-color: #EF4444;
+        background: #FFFFFF;
     }
     .advisory-warn {
-        border-left-color: #d97706;
-        background: #fffbeb;
+        border-left-color: #F59E0B;
+        background: #FFFFFF;
     }
     .advisory-safe {
-        border-left-color: #2d6a4f;
-        background: #f2f9f1;
+        border-left-color: #22C55E;
+        background: #FFFFFF;
     }
 
     @keyframes swayStalk {
@@ -513,44 +609,27 @@ st.markdown(
 )
 
 if not st.session_state["splash_seen"]:
-    splash_html = """
-    <div style="
-        background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 55%, #7f5539 100%);
-        border-radius: 20px;
-        padding: 54px 28px;
-        text-align: center;
-        color: #fffdf8;
-        box-shadow: 0 18px 42px rgba(27, 67, 50, 0.28);
-        border: 3px solid #e9c46a;
-        margin: 14px auto 22px auto;
-        max-width: 920px;
-    ">
-        <svg width="96" height="96" viewBox="0 0 100 100" style="margin-bottom: 10px;">
-            <circle cx="50" cy="50" r="44" fill="#e9c46a" opacity="0.22"/>
-            <circle cx="50" cy="36" r="14" fill="#ffb703"/>
-            <path d="M50 84 L50 44" stroke="#95d5b2" stroke-width="5" stroke-linecap="round"/>
-            <path d="M50 66 C34 62, 28 48, 36 42 C44 46, 48 56, 50 66 Z" fill="#74c69d"/>
-            <path d="M50 58 C66 54, 72 40, 64 34 C56 38, 52 48, 50 58 Z" fill="#b7e4c7"/>
-            <ellipse cx="50" cy="85" rx="28" ry="6" fill="#d4a373"/>
-        </svg>
-        <div style="font-size: 2.5rem; font-weight: 900; letter-spacing: 0.02em; color: #fefae0; margin-bottom: 6px;">
-            🙏 Namaste & Hello, Kisan Mitra!
+    st.markdown(
+        """
+        <div style="
+            height: 76vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-size: 3.1rem;
+            font-weight: 800;
+            color: #0F172A;
+            letter-spacing: 0.01em;
+        ">
+            🙏 Namaste & Hello
         </div>
-        <div style="font-size: 1.15rem; font-weight: 600; color: #e9c46a; margin-bottom: 14px;">
-            Welcome to AGROSAR — Smart Sub-Canopy Soil Moisture & Crop Protection Assistant
-        </div>
-        <p style="font-size: 0.96rem; color: #f1faee; max-width: 640px; margin: 0 auto; line-height: 1.55;">
-            No underground sensors needed. Check root-zone water levels, storm lodging risk, and precision irrigation advice in your own language.
-        </p>
-    </div>
-    """
-    st.markdown(splash_html, unsafe_allow_html=True)
-    _, col_enter, _ = st.columns([1.2, 1.6, 1.2])
-    with col_enter:
-        if st.button("🌾 Enter AgroSAR Portal", type="primary", use_container_width=True):
-            st.session_state["splash_seen"] = True
-            st.rerun()
-    st.stop()
+        """,
+        unsafe_allow_html=True
+    )
+    time.sleep(5)
+    st.session_state["splash_seen"] = True
+    st.rerun()
 
 def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
     try:
@@ -568,13 +647,13 @@ def add_ee_layer(m, ee_image_object, vis_params, name, show=True):
 
 brand_header_html = """
 <div class="agro-brand-bar">
-    <svg width="46" height="46" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="2" y="2" width="60" height="60" rx="16" fill="#1b4332"/>
-        <circle cx="44" cy="20" r="7" fill="#ffb703"/>
-        <path d="M32 52V24" stroke="#95d5b2" stroke-width="3.5" stroke-linecap="round"/>
-        <path d="M32 42C21 40 16 30 22 25C28 28 31 35 32 42Z" fill="#52b788"/>
-        <path d="M32 35C43 33 48 23 42 18C36 21 33 28 32 35Z" fill="#b7e4c7"/>
-        <path d="M16 52C22 49 42 49 48 52" stroke="#d4a373" stroke-width="3.5" stroke-linecap="round"/>
+    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="2" width="60" height="60" rx="16" fill="#15803D"/>
+        <circle cx="45" cy="19" r="7" fill="#F59E0B"/>
+        <path d="M32 52V23" stroke="#FFFFFF" stroke-width="3.8" stroke-linecap="round"/>
+        <path d="M32 42C20 40 15 29 21 24C28 27 31 35 32 42Z" fill="#22C55E"/>
+        <path d="M32 34C44 32 49 21 43 16C36 19 33 27 32 34Z" fill="#BBF7D0"/>
+        <path d="M15 52C22 49 42 49 49 52" stroke="#F8FAFC" stroke-width="3.5" stroke-linecap="round"/>
     </svg>
     <div class="agro-title">AGROSAR</div>
 </div>
@@ -613,7 +692,7 @@ if page == "🏠 HomePage":
     st.markdown(
         """
         <div class="mission-box">
-            <h3 style="color: #1b4332; margin-top:0;">🌾 Operational Overview</h3>
+            <h3 style="color: #15803D; margin-top:0;">🌾 Operational Overview</h3>
             <p><strong>AgroSAR</strong> is a spaceborne radar monitoring and variable-rate actuation infrastructure designed to invert sub-canopy root-zone soil hydrology without relying on physical ground probes.</p>
             <p>Conventional optical vegetation indices (like NDVI) only evaluate top-canopy greenness and fail to detect subterranean root saturation or moisture deficits. AgroSAR leverages <strong>ESA Sentinel-1 C-band synthetic aperture radar (SAR)</strong> to penetrate dense crop foliage, separating soil dielectric permittivity from geometric surface roughness.</p>
         </div>
@@ -627,7 +706,7 @@ if page == "🏠 HomePage":
             """
             <div class="hud-card">
                 <div class="hud-card-label">🛰️ Core Sensor Array</div>
-                <div style="color: #2d3a2d; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
+                <div style="color: #0F172A; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
 - <strong>Sentinel-1 C-SAR:</strong> 10m spatial resolution dual-polarization backscatter (VV / VH).<br>
 - <strong>Sentinel-2 MSI:</strong> 10m multispectral greenness for Water Cloud canopy attenuation.<br>
 - <strong>ECMWF ERA5-Land:</strong> Live 10m surface atmospheric wind reanalysis.
@@ -641,7 +720,7 @@ if page == "🏠 HomePage":
             """
             <div class="hud-card">
                 <div class="hud-card-label">⚙️ Algorithmic Inversion</div>
-                <div style="color: #2d3a2d; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
+                <div style="color: #0F172A; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
 - <strong>Cross-Pol Decoupling:</strong> Isolates surface soil roughness via cross-polarization ratio (VH / VV).<br>
 - <strong>Water Cloud Inversion:</strong> Eliminates canopy scattering to compute true soil permittivity.<br>
 - <strong>Biomechanical Lodging:</strong> Solves aerodynamic drag torque vs. root anchorage resistance.
@@ -655,7 +734,7 @@ if page == "🏠 HomePage":
             """
             <div class="hud-card">
                 <div class="hud-card-label">⚡ Autonomous Actuation</div>
-                <div style="color: #2d3a2d; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
+                <div style="color: #0F172A; font-size: 0.9rem; margin-top: 8px; line-height: 1.55;">
 - <strong>ISOBUS Standard:</strong> Outputs ISO 11783-10 compliant JSON machine telemetry.<br>
 - <strong>Hydraulic Lockout:</strong> Halts irrigation automatically during elevated lodging risks.<br>
 - <strong>Zero Hardware Overhead:</strong> Operates entirely via cloud-hosted satellite processing.
@@ -686,18 +765,18 @@ elif page == "🗺️ Radar Analysis Canvas":
             gps_html = """
             <div style="text-align: center;">
                 <button onclick="getLocation()" style="
-                    background: linear-gradient(135deg, #2d6a4f, #40916c);
+                    background: linear-gradient(135deg, #15803D, #0284C7);
                     border: none;
-                    color: #ffffff;
+                    color: #FFFFFF;
                     padding: 9px 12px;
                     font-weight: 700;
                     border-radius: 8px;
                     cursor: pointer;
                     width: 100%;
                     font-size: 0.85rem;
-                    box-shadow: 0 3px 8px rgba(45, 106, 79, 0.25);
+                    box-shadow: 0 3px 8px rgba(21, 128, 61, 0.22);
                 ">🎯 Ping Live Field GPS</button>
-                <p id="status" style="color: #1b4332; font-size: 0.74rem; margin-top: 6px; font-weight: 600;"></p>
+                <p id="status" style="color: #0F172A; font-size: 0.74rem; margin-top: 6px; font-weight: 600;"></p>
             </div>
             <script>
             function getLocation() {
@@ -932,96 +1011,93 @@ elif page == "🗺️ Radar Analysis Canvas":
             "Caution: Stalks somewhat vulnerable to falling." if res["lodging_label"] == "Moderate Risk" else "Stable: Stalks securely anchored in soil."
         )
 
-        sm_pill = "pill-amber" if res["mean_sm"] < 16.0 else ("pill-blue" if res["mean_sm"] > 35.0 else "pill-green")
+        sm_pill = "pill-red" if res["mean_sm"] < 16.0 else ("pill-blue" if res["mean_sm"] > 35.0 else "pill-green")
         sm_desc = "Deficit: Root stress; pulse irrigation required." if res["mean_sm"] < 16.0 else (
             "Waterlogged: Saturated; suspend furrow irrigation." if res["mean_sm"] > 35.0 else "Optimal: Healthy moisture availability."
         )
 
         r_desc = "Plowed / High Tilth: Heavy surface roughness filtered." if res["mean_roughness"] > 1.25 else "Smooth Seedbed: Minimal roughness interference."
+        w_pill = "pill-amber" if res["mean_wind_kmh"] > 20.0 else "pill-green"
         w_desc = "High aerodynamic drag on standing stalks." if res["mean_wind_kmh"] > 25.0 else "Gentle breeze: Minimal mechanical shear stress."
+        l_val_color = "#EF4444" if res["lodging_label"] == "HIGH RISK" else ("#F59E0B" if res["lodging_label"] == "Moderate Risk" else "#15803D")
 
-        hud_cards_html = f"""
-        <div class="hud-grid">
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <rect x="10" y="42" width="80" height="26" rx="6" fill="#7f5539"/>
-                        <path d="M50 42 L50 18 M50 32 L38 24 M50 28 L62 20" stroke="#52b788" stroke-width="4" stroke-linecap="round"/>
-                        <circle class="svg-drop" cx="34" cy="52" r="4" fill="#38bdf8"/>
-                        <circle class="svg-drop" cx="50" cy="56" r="5" fill="#0284c7"/>
-                        <circle class="svg-drop" cx="66" cy="52" r="4" fill="#38bdf8"/>
-                    </svg>
-                    <div class="popup-title">Root-Zone Water Vision</div>
-                    <div class="popup-caption">Radar waves pass right through leaves to measure water hugging the crop roots below!</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">💧 Decoupled Moisture</div>
-                    <div class="hud-card-value">{res['mean_sm']:.1f}%</div>
-                    <div class="card-explainer">True subterranean root water, calculated beneath crop foliage.</div>
-                </div>
-                <div class="hud-pill {sm_pill}">{sm_desc}</div>
-            </div>
-
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <path d="M10 54 Q22 40 34 54 T58 54 T82 54 L90 66 L10 66 Z" fill="#9c6644"/>
-                        <path class="svg-wave" d="M22 14 L46 44 M78 14 L54 44" stroke="#2d6a4f" stroke-width="3" stroke-linecap="round"/>
-                        <circle cx="50" cy="48" r="5" fill="#e9c46a"/>
-                    </svg>
-                    <div class="popup-title">Soil Bump & Furrow Filter</div>
-                    <div class="popup-caption">Separates plowed dirt clods from real moisture so rough soil never tricks the reading.</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">🪨 Roughness Factor</div>
-                    <div class="hud-card-value">{res['mean_roughness']:.2f}</div>
-                    <div class="card-explainer">Filters out bumps from tilling so radar isn't deceived.</div>
-                </div>
-                <div class="hud-pill pill-blue">{r_desc}</div>
-            </div>
-
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <path class="svg-wind" d="M12 24 H64 C72 24 72 14 64 14" stroke="#0284c7" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-                        <path class="svg-wind" d="M18 38 H76 C84 38 84 48 76 48" stroke="#38bdf8" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-                        <path class="svg-sway" d="M50 66 L50 30 M50 42 L40 34 M50 36 L60 28" stroke="#2d6a4f" stroke-width="4" stroke-linecap="round"/>
-                    </svg>
-                    <div class="popup-title">Field Breeze & Gust Check</div>
-                    <div class="popup-caption">Tracks live 10m wind speed pushing against tall crop stems across your field.</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">🌬️ ERA5 Surface Wind</div>
-                    <div class="hud-card-value">{res['mean_wind_kmh']:.1f} <span style="font-size:0.95rem; font-weight:500; color:#526052;">km/h</span></div>
-                    <div class="card-explainer">Live 10-meter wind applying physical shear against crop stems.</div>
-                </div>
-                <div class="hud-pill pill-green">{w_desc}</div>
-            </div>
-
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <rect x="14" y="56" width="72" height="12" rx="4" fill="#7f5539"/>
-                        <g class="svg-sway">
-                            <path d="M46 58 L56 20" stroke="#d97706" stroke-width="5" stroke-linecap="round"/>
-                            <ellipse cx="58" cy="18" rx="6" ry="10" transform="rotate(20 58 18)" fill="#ffb703"/>
-                        </g>
-                        <path class="svg-wind" d="M14 28 H42" stroke="#c1121f" stroke-width="3" stroke-linecap="round"/>
-                    </svg>
-                    <div class="popup-title">Crop Topple Safety Guard</div>
-                    <div class="popup-caption">Checks if soggy roots + strong winds could bend or flatten your standing harvest.</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">⚠️ Lodging Threat</div>
-                    <div class="hud-card-value" style="color: {'#c1121f' if res['lodging_label'] == 'HIGH RISK' else ('#d97706' if res['lodging_label'] == 'Moderate Risk' else '#1b4332')};">
-                        {res['lodging_label']}
-                    </div>
-                    <div class="card-explainer">Calculates if wind drag torque will topple roots in wet soil.</div>
-                </div>
-                <div class="hud-pill {l_pill}">{l_desc}</div>
-            </div>
-        </div>
-        """
+        hud_cards_html = (
+            '<div class="hud-grid">'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<rect x="10" y="42" width="80" height="26" rx="6" fill="#7F5539"/>'
+            '<path d="M50 42 L50 18 M50 32 L38 24 M50 28 L62 20" stroke="#15803D" stroke-width="4" stroke-linecap="round"/>'
+            '<circle class="svg-drop" cx="34" cy="52" r="4" fill="#3B82F6"/>'
+            '<circle class="svg-drop" cx="50" cy="56" r="5" fill="#0284C7"/>'
+            '<circle class="svg-drop" cx="66" cy="52" r="4" fill="#3B82F6"/>'
+            '</svg>'
+            '<div class="popup-title">Root-Zone Water Vision</div>'
+            '<div class="popup-caption">Radar waves pass right through leaves to measure water hugging the crop roots below!</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">💧 Decoupled Moisture</div>'
+            f'<div class="hud-card-value">{res["mean_sm"]:.1f}%</div>'
+            '<div class="card-explainer">True subterranean root water, calculated beneath crop foliage.</div>'
+            '</div>'
+            f'<div class="hud-pill {sm_pill}">{sm_desc}</div>'
+            '</div>'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<path d="M10 54 Q22 40 34 54 T58 54 T82 54 L90 66 L10 66 Z" fill="#9C6644"/>'
+            '<path class="svg-wave" d="M22 14 L46 44 M78 14 L54 44" stroke="#0284C7" stroke-width="3" stroke-linecap="round"/>'
+            '<circle cx="50" cy="48" r="5" fill="#F59E0B"/>'
+            '</svg>'
+            '<div class="popup-title">Soil Bump & Furrow Filter</div>'
+            '<div class="popup-caption">Separates plowed dirt clods from real moisture so rough soil never tricks the reading.</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">🪨 Roughness Factor</div>'
+            f'<div class="hud-card-value">{res["mean_roughness"]:.2f}</div>'
+            '<div class="card-explainer">Filters out bumps from tilling so radar isn\'t deceived.</div>'
+            '</div>'
+            f'<div class="hud-pill pill-blue">{r_desc}</div>'
+            '</div>'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<path class="svg-wind" d="M12 24 H64 C72 24 72 14 64 14" stroke="#0284C7" stroke-width="3.5" fill="none" stroke-linecap="round"/>'
+            '<path class="svg-wind" d="M18 38 H76 C84 38 84 48 76 48" stroke="#3B82F6" stroke-width="3.5" fill="none" stroke-linecap="round"/>'
+            '<path class="svg-sway" d="M50 66 L50 30 M50 42 L40 34 M50 36 L60 28" stroke="#15803D" stroke-width="4" stroke-linecap="round"/>'
+            '</svg>'
+            '<div class="popup-title">Field Breeze & Gust Check</div>'
+            '<div class="popup-caption">Tracks live 10m wind speed pushing against tall crop stems across your field.</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">🌬️ ERA5 Surface Wind</div>'
+            f'<div class="hud-card-value">{res["mean_wind_kmh"]:.1f} <span style="font-size:0.95rem; font-weight:500; color:#475569;">km/h</span></div>'
+            '<div class="card-explainer">Live 10-meter wind applying physical shear against crop stems.</div>'
+            '</div>'
+            f'<div class="hud-pill {w_pill}">{w_desc}</div>'
+            '</div>'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<rect x="14" y="56" width="72" height="12" rx="4" fill="#7F5539"/>'
+            '<g class="svg-sway">'
+            '<path d="M46 58 L56 20" stroke="#F59E0B" stroke-width="5" stroke-linecap="round"/>'
+            '<ellipse cx="58" cy="18" rx="6" ry="10" transform="rotate(20 58 18)" fill="#F59E0B"/>'
+            '</g>'
+            '<path class="svg-wind" d="M14 28 H42" stroke="#EF4444" stroke-width="3" stroke-linecap="round"/>'
+            '</svg>'
+            '<div class="popup-title">Crop Topple Safety Guard</div>'
+            '<div class="popup-caption">Checks if soggy roots + strong winds could bend or flatten your standing harvest.</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">⚠️ Lodging Threat</div>'
+            f'<div class="hud-card-value" style="color: {l_val_color};">{res["lodging_label"]}</div>'
+            '<div class="card-explainer">Calculates if wind drag torque will topple roots in wet soil.</div>'
+            '</div>'
+            f'<div class="hud-pill {l_pill}">{l_desc}</div>'
+            '</div>'
+            '</div>'
+        )
         st.markdown(hud_cards_html, unsafe_allow_html=True)
 
         st.subheader("🗺️ 10-Meter Sub-Canopy SAR Radar Heatmap")
@@ -1033,13 +1109,13 @@ elif page == "🗺️ Radar Analysis Canvas":
             .leaflet-control-layers {
                 font-family: inherit !important;
                 font-size: 13px !important;
-                box-shadow: 0 4px 14px rgba(27, 67, 50, 0.25) !important;
+                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14) !important;
                 border-radius: 10px !important;
                 padding: 10px 14px !important;
                 margin-right: 18px !important;
-                background: rgba(255, 253, 248, 0.96) !important;
-                color: #1b4332 !important;
-                border: 1.5px solid #2d6a4f !important;
+                background: #FFFFFF !important;
+                color: #0F172A !important;
+                border: 1.5px solid #CBD5E1 !important;
             }
             </style>
             """,
@@ -1052,19 +1128,19 @@ elif page == "🗺️ Radar Analysis Canvas":
             "bands": ["Soil_Moisture_Pct"],
             "min": 5.0,
             "max": 45.0,
-            "palette": ["8c510a", "d8b365", "f6e8c3", "c7eae5", "5ab4ac", "01665e"]
+            "palette": ["8c510a", "d8b365", "f6e8c3", "c7eae5", "5ab4ac", "3B82F6"]
         }
         lodging_vis = {
             "bands": ["Lodging_Risk_Index"],
             "min": 1.0,
             "max": 6.0,
-            "palette": ["1a9641", "a6d96a", "ffffbf", "fdae61", "d7191c"]
+            "palette": ["22C55E", "a6d96a", "ffffbf", "F59E0B", "EF4444"]
         }
         ndvi_vis = {
             "bands": ["NDVI"],
             "min": 0.0,
             "max": 0.8,
-            "palette": ["#8c510a", "#ffffbf", "#1b7837"]
+            "palette": ["#8c510a", "#ffffbf", "#15803D"]
         }
 
         add_ee_layer(m, res["soil_moisture_layer"], sm_vis, "Sub-Canopy Moisture (%)", show=True)
@@ -1081,7 +1157,7 @@ elif page == "🗺️ Radar Analysis Canvas":
         )
 
         st.subheader("📈 Sub-Canopy Moisture Trajectory & Depletion Forecast")
-        st.caption("Solid forest-green line displays past radar observations; dashed harvest-gold line predicts soil drying speed over the upcoming days.")
+        st.caption("Solid crop-green line displays past radar observations; dashed amber line predicts soil drying speed over the upcoming days.")
 
         hist_days = [f"Day -{i}" for i in range(14, 0, -2)] + ["Today"]
         hist_values = [round(res["mean_sm"] * (1.0 + (0.015 * i)), 1) for i in range(len(hist_days) - 1, -1, -1)]
@@ -1093,23 +1169,49 @@ elif page == "🗺️ Radar Analysis Canvas":
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=hist_days, y=hist_values, mode='lines+markers', name='Radar History',
-            line=dict(color='#2d6a4f', width=3.5), marker=dict(size=7)
+            line=dict(color='#15803D', width=3.5), marker=dict(size=7, color='#15803D')
         ))
         fig.add_trace(go.Scatter(
             x=[hist_days[-1]] + fc_days, y=[hist_values[-1]] + fc_values, mode='lines+markers', name='Prognostic Forecast',
-            line=dict(color='#d97706', width=3.5, dash='dash'), marker=dict(size=7)
+            line=dict(color='#F59E0B', width=3.5, dash='dash'), marker=dict(size=7, color='#F59E0B')
         ))
         fig.add_hline(
-            y=16.0, line_dash="dot", annotation_text="Wilting Stress Threshold (16.0%)",
-            annotation_position="bottom right", line_color="#c1121f"
+            y=16.0, line_dash="dot",
+            annotation_text="Wilting Stress Threshold (16.0%)",
+            annotation_position="bottom right",
+            annotation_font=dict(color="#EF4444", size=12),
+            line_color="#EF4444"
         )
         fig.update_layout(
-            xaxis_title="Observation Timeline", yaxis_title="Volumetric Soil Moisture (%)",
-            plot_bgcolor='rgba(255,255,255,0.75)', paper_bgcolor='rgba(255,255,255,0.0)',
-            font=dict(color="#1f2d1f"), margin=dict(l=10, r=10, t=30, b=20),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            xaxis=dict(
+                title=dict(text="Observation Timeline", font=dict(color="#0F172A", size=13)),
+                tickfont=dict(color="#0F172A", size=12),
+                gridcolor="#E2E8F0",
+                linecolor="#CBD5E1"
+            ),
+            yaxis=dict(
+                title=dict(text="Volumetric Soil Moisture (%)", font=dict(color="#0F172A", size=13)),
+                tickfont=dict(color="#0F172A", size=12),
+                gridcolor="#E2E8F0",
+                linecolor="#CBD5E1"
+            ),
+            plot_bgcolor="#FFFFFF",
+            paper_bgcolor="#F8FAFC",
+            font=dict(color="#0F172A", size=13),
+            margin=dict(l=15, r=15, t=42, b=25),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.03,
+                xanchor="right",
+                x=1,
+                font=dict(color="#0F172A", size=13),
+                bgcolor="#FFFFFF",
+                bordercolor="#CBD5E1",
+                borderwidth=1
+            )
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, theme=None)
 
         st.markdown("---")
         col_adv_head, col_adv_lang = st.columns([2.4, 1.2])
@@ -1164,7 +1266,7 @@ elif page == "🗺️ Radar Analysis Canvas":
 
         if days_to_wilting:
             p2_class = "advisory-warn"
-            p2_plain = f"⏳ Projected Stress In {days_to_wilting} Days: Following the orange dashed curve, root-zone moisture will drop below the 16.0% wilting threshold in approximately Day +{days_to_wilting} unless supplemental water or rainfall occurs."
+            p2_plain = f"⏳ Projected Stress In {days_to_wilting} Days: Following the amber dashed curve, root-zone moisture will drop below the 16.0% wilting threshold in approximately Day +{days_to_wilting} unless supplemental water or rainfall occurs."
         else:
             p2_class = "advisory-safe"
             p2_plain = "📈 Extended Moisture Buffer: Under current evapotranspiration rates, soil moisture will stay comfortably above wilting stress for the entire 8-day projection window."
@@ -1198,8 +1300,8 @@ elif page == "🗺️ Radar Analysis Canvas":
             p6_class = "advisory-warn"
             p6_plain = f"🎯 Targeted Water Prescription: {target_depth} mm — To restore soil to maximum field capacity (28% VWC) without inducing waterlogging or wasting energy."
 
-        raw_points = (p1_plain, p2_plain, p3_plain, p4_plain, p5_plain, p6_plain)
-        translated_points = translate_advisories_cached(raw_points, target_lang_code)
+        raw_points = [p1_plain, p2_plain, p3_plain, p4_plain, p5_plain, p6_plain]
+        translated_points = translate_advisories_list(raw_points, target_lang_code)
 
         def bold_prefix(txt: str) -> str:
             if ":" in txt:
@@ -1207,16 +1309,16 @@ elif page == "🗺️ Radar Analysis Canvas":
                 return f"<strong>{head}:</strong>{rest}"
             return txt
 
-        advisory_html = f"""
-        <div>
-            <div class="advisory-item {p1_class}">{bold_prefix(translated_points[0])}</div>
-            <div class="advisory-item {p2_class}">{bold_prefix(translated_points[1])}</div>
-            <div class="advisory-item {p3_class}">{bold_prefix(translated_points[2])}</div>
-            <div class="advisory-item {p4_class}">{bold_prefix(translated_points[3])}</div>
-            <div class="advisory-item {p5_class}">{bold_prefix(translated_points[4])}</div>
-            <div class="advisory-item {p6_class}">{bold_prefix(translated_points[5])}</div>
-        </div>
-        """
+        advisory_html = (
+            '<div>'
+            f'<div class="advisory-item {p1_class}">{bold_prefix(translated_points[0])}</div>'
+            f'<div class="advisory-item {p2_class}">{bold_prefix(translated_points[1])}</div>'
+            f'<div class="advisory-item {p3_class}">{bold_prefix(translated_points[2])}</div>'
+            f'<div class="advisory-item {p4_class}">{bold_prefix(translated_points[3])}</div>'
+            f'<div class="advisory-item {p5_class}">{bold_prefix(translated_points[4])}</div>'
+            f'<div class="advisory-item {p6_class}">{bold_prefix(translated_points[5])}</div>'
+            '</div>'
+        )
         st.markdown(advisory_html, unsafe_allow_html=True)
 
 elif page == "⚡ Actuation Protocol (VRI)":
@@ -1226,7 +1328,7 @@ elif page == "⚡ Actuation Protocol (VRI)":
         st.markdown(
             """
             <div class="mission-box">
-                <h3 style="color: #1b4332; margin-top:0;">⚡ Cyber-Physical Machine Actuation Console</h3>
+                <h3 style="color: #15803D; margin-top:0;">⚡ Cyber-Physical Machine Actuation Console</h3>
             </div>
             """,
             unsafe_allow_html=True
@@ -1235,68 +1337,65 @@ elif page == "⚡ Actuation Protocol (VRI)":
         lockout_status = "ACTIVE" if res["lockout"] else "INACTIVE"
         lockout_pill = "pill-red" if res["lockout"] else "pill-green"
         lockout_desc = "Emergency Inhibit: Water discharge locked out to protect stalks." if res["lockout"] else "Normal Operation: Solenoid circuits authorized."
+        lockout_color = "#EF4444" if res["lockout"] else "#15803D"
 
-        vri_cards_html = f"""
-        <div class="hud-grid-3">
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <rect x="18" y="14" width="64" height="44" rx="10" fill="#1b4332"/>
-                        <circle class="svg-gear" cx="38" cy="36" r="10" stroke="#e9c46a" stroke-width="3" stroke-dasharray="4 3" fill="none"/>
-                        <path class="svg-wave" d="M54 36 H74" stroke="#95d5b2" stroke-width="4" stroke-linecap="round"/>
-                    </svg>
-                    <div class="popup-title">Smart Pump Brain Signal</div>
-                    <div class="popup-caption">Sends the exact automated instruction directly to your field's irrigation controller.</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">⚙️ Command Mode</div>
-                    <div class="hud-card-value-cmd" title="{res['valve_command']}">{res['valve_command']}</div>
-                    <div class="card-explainer">The exact algorithmic instruction dispatched to the irrigation controller.</div>
-                </div>
-                <div class="hud-pill pill-blue">ISO 11783-10 Actuation Vector</div>
-            </div>
-
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <rect x="16" y="24" width="68" height="14" rx="6" fill="#52796f"/>
-                        <rect x="42" y="14" width="16" height="10" rx="3" fill="#e9c46a"/>
-                        <circle class="svg-drop" cx="34" cy="52" r="4.5" fill="#0284c7"/>
-                        <circle class="svg-drop" cx="50" cy="58" r="4.5" fill="#38bdf8"/>
-                        <circle class="svg-drop" cx="66" cy="52" r="4.5" fill="#0284c7"/>
-                    </svg>
-                    <div class="popup-title">Precision Valve Pulse</div>
-                    <div class="popup-caption">Controls how wide and how long water valves open so not a single drop is wasted.</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">⚡ PWM Solenoid Duty</div>
-                    <div class="hud-card-value">{res['duty_cycle']}%</div>
-                    <div class="card-explainer">Valve pulse frequency; delivers target water depth of {res['app_depth_mm']} mm.</div>
-                </div>
-                <div class="hud-pill pill-amber">Target Depth: {res['app_depth_mm']} mm</div>
-            </div>
-
-            <div class="hud-card">
-                <div class="hover-popup">
-                    <svg width="86" height="64" viewBox="0 0 100 74">
-                        <path d="M50 10 L76 22 V40 C76 54 64 64 50 68 C36 64 24 54 24 40 V22 L50 10 Z" fill="#2d6a4f"/>
-                        <rect x="41" y="34" width="18" height="15" rx="3" fill="#ffb703"/>
-                        <path d="M45 34 V28 A5 5 0 0 1 55 28 V34" stroke="#fefae0" stroke-width="3" fill="none"/>
-                    </svg>
-                    <div class="popup-title">Storm Safety Shutoff Shield</div>
-                    <div class="popup-caption">Automatically locks water gates during high winds so wet roots never lose grip.</div>
-                </div>
-                <div>
-                    <div class="hud-card-label">🛡️ Hydraulic Lockout</div>
-                    <div class="hud-card-value" style="color: {'#c1121f' if res['lockout'] else '#1b4332'};">
-                        {lockout_status}
-                    </div>
-                    <div class="card-explainer">Autonomous fail-safe that cuts water when high winds threaten to uproot stalks.</div>
-                </div>
-                <div class="hud-pill {lockout_pill}">{lockout_desc}</div>
-            </div>
-        </div>
-        """
+        vri_cards_html = (
+            '<div class="hud-grid-3">'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<rect x="18" y="14" width="64" height="44" rx="10" fill="#15803D"/>'
+            '<circle class="svg-gear" cx="38" cy="36" r="10" stroke="#F59E0B" stroke-width="3" stroke-dasharray="4 3" fill="none"/>'
+            '<path class="svg-wave" d="M54 36 H74" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>'
+            '</svg>'
+            '<div class="popup-title">Smart Pump Brain Signal</div>'
+            '<div class="popup-caption">Sends the exact automated instruction directly to your field\'s irrigation controller.</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">⚙️ Command Mode</div>'
+            f'<div class="hud-card-value-cmd" title="{res["valve_command"]}">{res["valve_command"]}</div>'
+            '<div class="card-explainer">The exact algorithmic instruction dispatched to the irrigation controller.</div>'
+            '</div>'
+            '<div class="hud-pill pill-blue">ISO 11783-10 Actuation Vector</div>'
+            '</div>'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<rect x="16" y="24" width="68" height="14" rx="6" fill="#0284C7"/>'
+            '<rect x="42" y="14" width="16" height="10" rx="3" fill="#F59E0B"/>'
+            '<circle class="svg-drop" cx="34" cy="52" r="4.5" fill="#3B82F6"/>'
+            '<circle class="svg-drop" cx="50" cy="58" r="4.5" fill="#0284C7"/>'
+            '<circle class="svg-drop" cx="66" cy="52" r="4.5" fill="#3B82F6"/>'
+            '</svg>'
+            '<div class="popup-title">Precision Valve Pulse</div>'
+            '<div class="popup-caption">Controls how wide and how long water valves open so not a single drop is wasted.</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">⚡ PWM Solenoid Duty</div>'
+            f'<div class="hud-card-value">{res["duty_cycle"]}%</div>'
+            f'<div class="card-explainer">Valve pulse frequency; delivers target water depth of {res["app_depth_mm"]} mm.</div>'
+            '</div>'
+            f'<div class="hud-pill pill-amber">Target Depth: {res["app_depth_mm"]} mm</div>'
+            '</div>'
+            '<div class="hud-card">'
+            '<div class="hover-popup">'
+            '<svg width="86" height="64" viewBox="0 0 100 74">'
+            '<path d="M50 10 L76 22 V40 C76 54 64 64 50 68 C36 64 24 54 24 40 V22 L50 10 Z" fill="#15803D"/>'
+            '<rect x="41" y="34" width="18" height="15" rx="3" fill="#F59E0B"/>'
+            '<path d="M45 34 V28 A5 5 0 0 1 55 28 V34" stroke="#FFFFFF" stroke-width="3" fill="none"/>'
+            '</svg>'
+            '<div class="popup-title">Storm Safety Shutoff Shield</div>'
+            '<div class="popup-caption">Automatically locks water gates during high winds so wet roots never lose grip.</div>'
+            '</div>'
+            '<div>'
+            '<div class="hud-card-label">🛡️ Hydraulic Lockout</div>'
+            f'<div class="hud-card-value" style="color: {lockout_color};">{lockout_status}</div>'
+            '<div class="card-explainer">Autonomous fail-safe that cuts water when high winds threaten to uproot stalks.</div>'
+            '</div>'
+            f'<div class="hud-pill {lockout_pill}">{lockout_desc}</div>'
+            '</div>'
+            '</div>'
+        )
         st.markdown(vri_cards_html, unsafe_allow_html=True)
 
         st.caption("💻 **ISOBUS ISO 11783-10 Telemetry Stream:** International standardized machine-readable payload ready for tractor & pivot terminals.")
@@ -1337,7 +1436,7 @@ elif page == "📋 Field Audit Report":
         st.markdown(
             """
             <div class="mission-box">
-                <h3 style="color: #1b4332; margin-top:0;">📋 Spaceborne Field Audit Certification</h3>
+                <h3 style="color: #15803D; margin-top:0;">📋 Spaceborne Field Audit Certification</h3>
                 <p>Formal diagnostic documentation for agronomic compliance, micro-insurance validation, and water-district verification.</p>
             </div>
             """,
@@ -1399,7 +1498,7 @@ elif page == "👥 Project Innovators & Mentor":
     st.markdown(
         """
         <div class="mission-box">
-            <h3 style="color: #1b4332; margin-top:0;">👥 Project Architecture & Engineering Team</h3>
+            <h3 style="color: #15803D; margin-top:0;">👥 Project Architecture & Engineering Team</h3>
             <p>AgroSAR: A Multi-Temporal Spaceborne Radar Inversion Framework for Sub-Canopy Hydrology and Lodging Prognostics.</p>
         </div>
         """,
@@ -1407,81 +1506,72 @@ elif page == "👥 Project Innovators & Mentor":
     )
 
     st.subheader("🎓 Academic Guidance & Project Mentorship")
-    st.markdown(
-        """
-        <div class="hud-card" style="border-color: #2d6a4f; background: #f2f9f1; min-height: 92px; margin-bottom: 18px;">
-            <div class="profile-popup">
-                <div class="profile-badge">🎓 Project Mentor</div>
-                <div class="profile-row"><strong>Name:</strong> Prof. Subhrangshu Das</div>
-                <div class="profile-row"><strong>Designation:</strong> Associate Professor & Project Supervisor</div>
-                <div class="profile-row"><strong>Departments:</strong> CSIT, CST, CSE (Cyber Security) & CSE (Networks)</div>
-                <div class="profile-row"><strong>Lab Affiliation:</strong> IEDC Lab (Innovation & Entrepreneurship Development Centre)</div>
-                <div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>
-            </div>
-            <div class="hud-card-name" style="color: #1b4332;">PROF. SUBHRANGSHU DAS</div>
-        </div>
-        """,
-        unsafe_allow_html=True
+    mentor_html = (
+        '<div class="hud-card" style="border-color: #15803D; background: #FFFFFF; min-height: 92px; margin-bottom: 18px;">'
+        '<div class="profile-popup">'
+        '<div class="profile-badge">🎓 Project Mentor</div>'
+        '<div class="profile-row"><strong>Name:</strong> Prof. Subhrangshu Das</div>'
+        '<div class="profile-row"><strong>Designation:</strong> Associate Professor & Project Supervisor</div>'
+        '<div class="profile-row"><strong>Departments:</strong> CSIT, CST, CSE (Cyber Security) & CSE (Networks)</div>'
+        '<div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>'
+        '</div>'
+        '<div class="hud-card-name" style="color: #15803D;">PROF. SUBHRANGSHU DAS</div>'
+        '</div>'
     )
+    st.markdown(mentor_html, unsafe_allow_html=True)
 
     st.markdown("---")
     st.subheader("👨‍💻 Project Innovators / Builders")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(
-            """
-            <div class="hud-card" style="margin-bottom:16px; min-height: 92px;">
-                <div class="profile-popup">
-                    <div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>
-                    <div class="profile-row"><strong>Name:</strong> Ansh Verma</div>
-                    <div class="profile-row"><strong>Roll No.:</strong> 8</div>
-                    <div class="profile-row"><strong>Enrollment No.:</strong> 12024002023007</div>
-                    <div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>
-                    <div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>
-                </div>
-                <div class="hud-card-name">ANSH VERMA</div>
-            </div>
-
-            <div class="hud-card" style="margin-bottom:16px; min-height: 92px;">
-                <div class="profile-popup">
-                    <div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>
-                    <div class="profile-row"><strong>Name:</strong> Bishal Dutta</div>
-                    <div class="profile-row"><strong>Roll No.:</strong> 18</div>
-                    <div class="profile-row"><strong>Enrollment No.:</strong> 12024002023015</div>
-                    <div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>
-                    <div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>
-                </div>
-                <div class="hud-card-name">BISHAL DUTTA</div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        team_col1_html = (
+            '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
+            '<div class="profile-popup">'
+            '<div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>'
+            '<div class="profile-row"><strong>Name:</strong> Ansh Verma</div>'
+            '<div class="profile-row"><strong>Roll No.:</strong> 8</div>'
+            '<div class="profile-row"><strong>Enrollment No.:</strong> 12024002023007</div>'
+            '<div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>'
+            '<div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>'
+            '</div>'
+            '<div class="hud-card-name">ANSH VERMA</div>'
+            '</div>'
+            '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
+            '<div class="profile-popup">'
+            '<div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>'
+            '<div class="profile-row"><strong>Name:</strong> Bishal Dutta</div>'
+            '<div class="profile-row"><strong>Roll No.:</strong> 18</div>'
+            '<div class="profile-row"><strong>Enrollment No.:</strong> 12024002023015</div>'
+            '<div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>'
+            '<div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>'
+            '</div>'
+            '<div class="hud-card-name">BISHAL DUTTA</div>'
+            '</div>'
         )
+        st.markdown(team_col1_html, unsafe_allow_html=True)
     with col2:
-        st.markdown(
-            """
-            <div class="hud-card" style="margin-bottom:16px; min-height: 92px;">
-                <div class="profile-popup">
-                    <div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>
-                    <div class="profile-row"><strong>Name:</strong> Arghya Paramanik</div>
-                    <div class="profile-row"><strong>Roll No.:</strong> 10</div>
-                    <div class="profile-row"><strong>Enrollment No.:</strong> 12024002023009</div>
-                    <div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>
-                    <div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>
-                </div>
-                <div class="hud-card-name">ARGHYA PARAMANIK</div>
-            </div>
-
-            <div class="hud-card" style="margin-bottom:16px; min-height: 92px;">
-                <div class="profile-popup">
-                    <div class="profile-badge">👩‍💻 Project Innovator • Group 18</div>
-                    <div class="profile-row"><strong>Name:</strong> Adrija Sarkar</div>
-                    <div class="profile-row"><strong>Roll No.:</strong> 3</div>
-                    <div class="profile-row"><strong>Enrollment No.:</strong> 12024002023003</div>
-                    <div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>
-                    <div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>
-                </div>
-                <div class="hud-card-name">ADRIJA SARKAR</div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        team_col2_html = (
+            '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
+            '<div class="profile-popup">'
+            '<div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>'
+            '<div class="profile-row"><strong>Name:</strong> Arghya Paramanik</div>'
+            '<div class="profile-row"><strong>Roll No.:</strong> 10</div>'
+            '<div class="profile-row"><strong>Enrollment No.:</strong> 12024002023009</div>'
+            '<div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>'
+            '<div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>'
+            '</div>'
+            '<div class="hud-card-name">ARGHYA PARAMANIK</div>'
+            '</div>'
+            '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
+            '<div class="profile-popup">'
+            '<div class="profile-badge">👩‍💻 Project Innovator • Group 18</div>'
+            '<div class="profile-row"><strong>Name:</strong> Adrija Sarkar</div>'
+            '<div class="profile-row"><strong>Roll No.:</strong> 3</div>'
+            '<div class="profile-row"><strong>Enrollment No.:</strong> 12024002023003</div>'
+            '<div class="profile-row"><strong>Stream:</strong> B.Tech in Computer Science & Information Technology (CSIT)</div>'
+            '<div class="profile-row"><strong>College:</strong> Institute of Engineering and Management (IEM), Kolkata</div>'
+            '</div>'
+            '<div class="hud-card-name">ADRIJA SARKAR</div>'
+            '</div>'
         )
+        st.markdown(team_col2_html, unsafe_allow_html=True)
