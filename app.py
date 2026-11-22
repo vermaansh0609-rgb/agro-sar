@@ -251,6 +251,17 @@ st.markdown(
         color: #FFFFFF !important;
     }
 
+    div.st-key-reset_lock_btn button,
+    div.st-key-reset_lock_btn button p,
+    div.st-key-reset_lock_btn button span,
+    div.st-key-reset_lock_btn button div,
+    div[data-testid="stExpander"] button,
+    div[data-testid="stExpander"] button p,
+    div[data-testid="stExpander"] button span,
+    div[data-testid="stExpander"] button div {
+        color: #FFFFFF !important;
+    }
+
     div[data-testid="stHorizontalBlock"] .stButton > button {
         border-radius: 999px !important;
         padding: 0.48rem 0.95rem !important;
@@ -317,22 +328,33 @@ st.markdown(
     }
 
     [data-testid="stJson"] {
-        background-color: #EAE2D3 !important;
         border: 1.5px solid #C8B9A0 !important;
         border-radius: 12px !important;
         padding: 14px 16px !important;
     }
-    [data-testid="stJson"] * {
-        color: #1E3F20 !important;
+    [data-testid="stJson"] span,
+    [data-testid="stJson"] div,
+    [data-testid="stJson"] label {
+        color: #F3EFE6 !important;
+        opacity: 1 !important;
     }
     [data-testid="stJson"] .string-value {
-        color: #4A3728 !important;
+        color: #F6C85F !important;
         font-weight: 600 !important;
+        opacity: 1 !important;
     }
     [data-testid="stJson"] .number-value,
-    [data-testid="stJson"] .boolean-value {
-        color: #9A6708 !important;
+    [data-testid="stJson"] .boolean-value,
+    [data-testid="stJson"] .float-value,
+    [data-testid="stJson"] .int-value {
+        color: #8CE99A !important;
         font-weight: 700 !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stJson"] svg {
+        fill: #D99B26 !important;
+        color: #D99B26 !important;
+        opacity: 1 !important;
     }
 
     [data-testid="stCode"],
@@ -930,7 +952,7 @@ elif page == "🗺️ Radar Analysis Canvas":
         with col_loc_banner:
             st.success(f"📍 Target Resolved ({lat:.4f}, {lon:.4f}): {st.session_state['field_address'][:72]}...")
         with col_reset_btn:
-            if st.button("🔄 Reset Lock", use_container_width=True, help="Clear cached scan state without rebooting"):
+            if st.button("🔄 Reset Lock", key="reset_lock_btn", use_container_width=True, help="Clear cached scan state without rebooting"):
                 st.session_state["scan_performed"] = False
                 st.session_state["scan_results"] = None
                 st.session_state["gps_override_active"] = False
