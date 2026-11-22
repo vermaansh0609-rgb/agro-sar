@@ -7,6 +7,8 @@ import requests
 import json
 import time
 import re
+import base64
+from pathlib import Path
 from datetime import datetime
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
@@ -35,6 +37,23 @@ def authenticate_gee():
         return False, str(e)
 
 gee_ready, auth_error = authenticate_gee()
+
+@st.cache_data(show_spinner=False)
+def get_member_avatar_html(filename: str, alt_text: str) -> str:
+    img_path = Path("assets") / filename
+    if not img_path.exists() or not img_path.is_file():
+        return ""
+    try:
+        encoded = base64.b64encode(img_path.read_bytes()).decode("utf-8")
+        return (
+            f'<div style="text-align:center; margin-bottom:8px;">'
+            f'<img src="data:image/jpeg;base64,{encoded}" alt="{alt_text}" '
+            f'style="width:74px; height:74px; border-radius:50%; object-fit:cover; '
+            f'border:2px solid #1E3F20; box-shadow:0 3px 8px rgba(74,55,40,0.22);" />'
+            f'</div>'
+        )
+    except Exception:
+        return ""
 
 @st.cache_data(ttl=600, show_spinner=False)
 def resolve_location_cached(query_str: str):
@@ -1624,6 +1643,11 @@ elif page == "👥 Project Innovators & Mentor":
         unsafe_allow_html=True
     )
 
+    ansh_avatar = get_member_avatar_html("ansh.jpeg", "Ansh Verma")
+    bishal_avatar = get_member_avatar_html("bishal.jpeg", "Bishal Dutta")
+    arghya_avatar = get_member_avatar_html("arghya.jpeg", "Arghya Paramanik")
+    adrija_avatar = get_member_avatar_html("adrija.jpeg", "Adrija Sarkar")
+
     st.subheader("🎓 Project Mentor")
     mentor_html = (
         '<div class="hud-card" style="border-color: #1E3F20; min-height: 92px; margin-bottom: 18px;">'
@@ -1646,6 +1670,7 @@ elif page == "👥 Project Innovators & Mentor":
         team_col1_html = (
             '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
             '<div class="profile-popup">'
+            f'{ansh_avatar}'
             '<div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>'
             '<div class="profile-row"><strong>Name:</strong> Ansh Verma</div>'
             '<div class="profile-row"><strong>Roll No.:</strong> 8</div>'
@@ -1657,6 +1682,7 @@ elif page == "👥 Project Innovators & Mentor":
             '</div>'
             '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
             '<div class="profile-popup">'
+            f'{bishal_avatar}'
             '<div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>'
             '<div class="profile-row"><strong>Name:</strong> Bishal Dutta</div>'
             '<div class="profile-row"><strong>Roll No.:</strong> 18</div>'
@@ -1672,6 +1698,7 @@ elif page == "👥 Project Innovators & Mentor":
         team_col2_html = (
             '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
             '<div class="profile-popup">'
+            f'{arghya_avatar}'
             '<div class="profile-badge">👨‍💻 Project Innovator • Group 18</div>'
             '<div class="profile-row"><strong>Name:</strong> Arghya Paramanik</div>'
             '<div class="profile-row"><strong>Roll No.:</strong> 10</div>'
@@ -1683,6 +1710,7 @@ elif page == "👥 Project Innovators & Mentor":
             '</div>'
             '<div class="hud-card" style="margin-bottom:16px; min-height: 92px;">'
             '<div class="profile-popup">'
+            f'{adrija_avatar}'
             '<div class="profile-badge">👩‍💻 Project Innovator • Group 18</div>'
             '<div class="profile-row"><strong>Name:</strong> Adrija Sarkar</div>'
             '<div class="profile-row"><strong>Roll No.:</strong> 3</div>'
