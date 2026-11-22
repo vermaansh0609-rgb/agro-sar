@@ -553,16 +553,11 @@ st.markdown(
     }
 
     .hud-card-value-cmd {
-        font-size: clamp(0.88rem, 1.08vw, 1.05rem);
+        font-size: 1.55rem;
         font-weight: 800;
-        color: #4A3728;
-        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-        margin: 10px 0 6px 0;
-        line-height: 1.25;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        letter-spacing: -0.02em;
+        color: #1E3F20;
+        margin: 8px 0 4px 0;
+        line-height: 1.18;
     }
 
     .card-explainer {
@@ -1046,29 +1041,33 @@ elif page == "🗺️ Radar Analysis Canvas":
                         mean_ndvi = float(stats.get('NDVI') or 0.58)
 
                         if mean_lodging >= 3.8 or (mean_lodging >= 2.6 and mean_wind_kmh > 22.0):
-                            lodging_label = "HIGH RISK"
+                            lodging_label = "High Risk"
                         elif mean_lodging >= 2.2:
-                            lodging_label = "Moderate Risk"
+                            lodging_label = "Caution"
                         else:
-                            lodging_label = "Safe / Low Risk"
+                            lodging_label = "Safe"
 
-                        if lodging_label == "HIGH RISK":
+                        if lodging_label == "High Risk":
                             valve_command = "INHIBIT_DISCHARGE_EMERGENCY"
+                            simple_command = "Emergency Stop"
                             duty_cycle = 0
                             app_depth_mm = 0.0
                             lockout = True
                         elif mean_sm < 16.0:
                             valve_command = "EXECUTE_VRI_PULSE"
+                            simple_command = "Water Heavily"
                             duty_cycle = 85
                             app_depth_mm = round((28.0 - mean_sm) * 1.8, 1)
                             lockout = False
                         elif mean_sm > 35.0:
                             valve_command = "ACTUATE_DRAINAGE_GATES"
+                            simple_command = "Drain Water"
                             duty_cycle = 0
                             app_depth_mm = 0.0
                             lockout = False
                         else:
                             valve_command = "MAINTAIN_STATIC_REGIME"
+                            simple_command = "Water Lightly"
                             duty_cycle = 35
                             app_depth_mm = 8.5
                             lockout = False
@@ -1089,6 +1088,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                             "mean_ndvi": mean_ndvi,
                             "lodging_label": lodging_label,
                             "valve_command": valve_command,
+                            "simple_command": simple_command,
                             "duty_cycle": duty_cycle,
                             "app_depth_mm": app_depth_mm,
                             "lockout": lockout,
@@ -1105,20 +1105,20 @@ elif page == "🗺️ Radar Analysis Canvas":
     if not res:
         st.info("👆 Set your location in the top console and click **Initialize Spaceborne SAR Scan** to begin telemetry analysis.")
     else:
-        l_pill = "pill-red" if res["lodging_label"] == "HIGH RISK" else ("pill-amber" if res["lodging_label"] == "Moderate Risk" else "pill-green")
-        l_desc = "Severe toppling danger: High canopy drag on wet soil." if res["lodging_label"] == "HIGH RISK" else (
-            "Caution: Stalks somewhat vulnerable to falling." if res["lodging_label"] == "Moderate Risk" else "Stable: Stalks securely anchored in soil."
+        l_pill = "pill-red" if res["lodging_label"] == "High Risk" else ("pill-amber" if res["lodging_label"] == "Caution" else "pill-green")
+        l_desc = "Danger of crops falling flat; stop watering right away." if res["lodging_label"] == "High Risk" else (
+            "Plants might bend; watch the wind closely." if res["lodging_label"] == "Caution" else "Plants are standing strong in the soil."
         )
 
         sm_pill = "pill-red" if res["mean_sm"] < 16.0 else ("pill-blue" if res["mean_sm"] > 35.0 else "pill-green")
-        sm_desc = "Deficit: Root stress; pulse irrigation required." if res["mean_sm"] < 16.0 else (
-            "Waterlogged: Saturated; suspend furrow irrigation." if res["mean_sm"] > 35.0 else "Optimal: Healthy moisture availability."
+        sm_desc = "Too Dry: Thirsty crops; water right away." if res["mean_sm"] < 16.0 else (
+            "Too Wet: Flooded soil; stop watering." if res["mean_sm"] > 35.0 else "Just Right: Healthy soil; crops are happy."
         )
 
-        r_desc = "Plowed / High Tilth: Heavy surface roughness filtered." if res["mean_roughness"] > 1.25 else "Smooth Seedbed: Minimal roughness interference."
+        r_desc = "Bumpy Ground: Plowed ridges ignored by the satellite." if res["mean_roughness"] > 1.25 else "Flat Ground: Smooth soil with clean radar reading."
         w_pill = "pill-amber" if res["mean_wind_kmh"] > 20.0 else "pill-green"
-        w_desc = "High aerodynamic drag on standing stalks." if res["mean_wind_kmh"] > 25.0 else "Gentle breeze: Minimal mechanical shear stress."
-        l_val_color = "#A63A2B" if res["lodging_label"] == "HIGH RISK" else ("#B47B12" if res["lodging_label"] == "Moderate Risk" else "#1E3F20")
+        w_desc = "Windy: Strong wind pushing against crop stems." if res["mean_wind_kmh"] > 20.0 else "Calm: Light breeze; safe for plants."
+        l_val_color = "#A63A2B" if res["lodging_label"] == "High Risk" else ("#B47B12" if res["lodging_label"] == "Caution" else "#1E3F20")
 
         hud_cards_html = (
             '<div class="hud-grid">'
@@ -1135,9 +1135,9 @@ elif page == "🗺️ Radar Analysis Canvas":
             '<div class="popup-caption">Radar waves pass right through leaves to measure water hugging the crop roots below!</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">💧 Decoupled Moisture</div>'
+            '<div class="hud-card-label">💧 Soil Water</div>'
             f'<div class="hud-card-value">{res["mean_sm"]:.1f}%</div>'
-            '<div class="card-explainer">True subterranean root water, calculated beneath crop foliage.</div>'
+            '<div class="card-explainer">How wet the soil is at the crop roots beneath the leaves.</div>'
             '</div>'
             f'<div class="hud-pill {sm_pill}">{sm_desc}</div>'
             '</div>'
@@ -1152,9 +1152,9 @@ elif page == "🗺️ Radar Analysis Canvas":
             '<div class="popup-caption">Separates plowed dirt clods from real moisture so rough soil never tricks the reading.</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">🪨 Roughness Factor</div>'
+            '<div class="hud-card-label">🪨 Soil Bumps</div>'
             f'<div class="hud-card-value">{res["mean_roughness"]:.2f}</div>'
-            '<div class="card-explainer">Filters out bumps from tilling so radar isn\'t deceived.</div>'
+            '<div class="card-explainer">Checks if the field is plowed or flat so dirt lumps don\'t confuse the radar.</div>'
             '</div>'
             f'<div class="hud-pill pill-blue">{r_desc}</div>'
             '</div>'
@@ -1169,9 +1169,9 @@ elif page == "🗺️ Radar Analysis Canvas":
             '<div class="popup-caption">Tracks live 10m wind speed pushing against tall crop stems across your field.</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">🌬️ ERA5 Surface Wind</div>'
+            '<div class="hud-card-label">🌬️ Wind Speed</div>'
             f'<div class="hud-card-value">{res["mean_wind_kmh"]:.1f} <span style="font-size:0.95rem; font-weight:500; color:#4A3728;">km/h</span></div>'
-            '<div class="card-explainer">Live 10-meter wind applying physical shear against crop stems.</div>'
+            '<div class="card-explainer">How hard the wind is blowing against standing plants.</div>'
             '</div>'
             f'<div class="hud-pill {w_pill}">{w_desc}</div>'
             '</div>'
@@ -1189,9 +1189,9 @@ elif page == "🗺️ Radar Analysis Canvas":
             '<div class="popup-caption">Checks if soggy roots + strong winds could bend or flatten your standing harvest.</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">⚠️ Lodging Threat</div>'
+            '<div class="hud-card-label">⚠️ Crop Fall Risk</div>'
             f'<div class="hud-card-value" style="color: {l_val_color};">{res["lodging_label"]}</div>'
-            '<div class="card-explainer">Calculates if wind drag torque will topple roots in wet soil.</div>'
+            '<div class="card-explainer">Checks if wind and muddy soil will knock the crops down.</div>'
             '</div>'
             f'<div class="hud-pill {l_pill}">{l_desc}</div>'
             '</div>'
@@ -1200,7 +1200,7 @@ elif page == "🗺️ Radar Analysis Canvas":
         st.markdown(hud_cards_html, unsafe_allow_html=True)
 
         st.subheader("🗺️ 10-Meter Sub-Canopy SAR Radar Heatmap")
-        st.caption("💡 **Tip:** Blue shades indicate high moisture, brown indicates dry soil. Use the top-right layer switch to inspect Lodging Risk or Greenness.")
+        st.caption("💡 **Tip:** Blue shades indicate high moisture, brown indicates dry soil. Use the top-right layer switch to inspect Crop Fall Risk or Greenness.")
 
         st.markdown(
             """
@@ -1242,9 +1242,9 @@ elif page == "🗺️ Radar Analysis Canvas":
             "palette": ["#4A3728", "#EAE2D3", "#1E3F20"]
         }
 
-        add_ee_layer(m, res["soil_moisture_layer"], sm_vis, "Sub-Canopy Moisture (%)", show=True)
-        add_ee_layer(m, res["lodging_risk_layer"], lodging_vis, "Lodging Risk Index", show=False)
-        add_ee_layer(m, res["ndvi_layer"], ndvi_vis, "Canopy Greenness (NDVI)", show=False)
+        add_ee_layer(m, res["soil_moisture_layer"], sm_vis, "Soil Water (%)", show=True)
+        add_ee_layer(m, res["lodging_risk_layer"], lodging_vis, "Crop Fall Risk", show=False)
+        add_ee_layer(m, res["ndvi_layer"], ndvi_vis, "Plant Greenness (NDVI)", show=False)
 
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
         st_folium(
@@ -1345,7 +1345,7 @@ elif page == "🗺️ Radar Analysis Canvas":
 
         current_sm = res["mean_sm"]
         wind = res["mean_wind_kmh"]
-        is_high_risk = res["lodging_label"] == "HIGH RISK"
+        is_high_risk = res["lodging_label"] == "High Risk"
 
         days_to_wilting = None
         for idx, val in enumerate(fc_values):
@@ -1430,15 +1430,32 @@ elif page == "⚡ Actuation Protocol (VRI)":
         st.markdown(
             """
             <div class="mission-box">
-                <h3 style="color: #1E3F20; margin-top:0;">⚡ Cyber-Physical Machine Actuation Console</h3>
+                <h3 style="color: #1E3F20; margin-top:0;">⚡ Auto-Watering Control Console</h3>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        lockout_status = "ACTIVE" if res["lockout"] else "INACTIVE"
+        simple_cmd = res.get("simple_command") or (
+            "Emergency Stop" if res["valve_command"] == "INHIBIT_DISCHARGE_EMERGENCY" else (
+                "Water Heavily" if res["valve_command"] == "EXECUTE_VRI_PULSE" else (
+                    "Drain Water" if res["valve_command"] == "ACTUATE_DRAINAGE_GATES" else "Water Lightly"
+                )
+            )
+        )
+        cmd_desc = (
+            "High wind risk; water shut off completely." if simple_cmd == "Emergency Stop" else (
+                "Soil is dry; strong watering turned on." if simple_cmd == "Water Heavily" else (
+                    "Field is flooded; drainage gates opened." if simple_cmd == "Drain Water" else "Soil is healthy; light steady watering."
+                )
+            )
+        )
+        cmd_pill_class = "pill-red" if simple_cmd == "Emergency Stop" else ("pill-amber" if simple_cmd == "Water Heavily" else "pill-blue")
+        cmd_color = "#A63A2B" if simple_cmd == "Emergency Stop" else "#1E3F20"
+
+        lockout_status = "ON" if res["lockout"] else "OFF"
         lockout_pill = "pill-red" if res["lockout"] else "pill-green"
-        lockout_desc = "Emergency Inhibit: Water discharge locked out to protect stalks." if res["lockout"] else "Normal Operation: Solenoid circuits authorized."
+        lockout_desc = "Water is locked off so muddy soil and wind don't knock down crops." if res["lockout"] else "Safe weather; water valves can run normally."
         lockout_color = "#A63A2B" if res["lockout"] else "#1E3F20"
 
         vri_cards_html = (
@@ -1454,11 +1471,11 @@ elif page == "⚡ Actuation Protocol (VRI)":
             '<div class="popup-caption">Sends the exact automated instruction directly to your field\'s irrigation controller.</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">⚙️ Command Mode</div>'
-            f'<div class="hud-card-value-cmd" title="{res["valve_command"]}">{res["valve_command"]}</div>'
-            '<div class="card-explainer">The exact algorithmic instruction dispatched to the irrigation controller.</div>'
+            '<div class="hud-card-label">⚙️ Pump Command</div>'
+            f'<div class="hud-card-value-cmd" style="color: {cmd_color};">{simple_cmd}</div>'
+            '<div class="card-explainer">The action sent to your farm\'s water pump right now.</div>'
             '</div>'
-            '<div class="hud-pill pill-blue">ISO 11783-10 Actuation Vector</div>'
+            f'<div class="hud-pill {cmd_pill_class}">{cmd_desc}</div>'
             '</div>'
             '<div class="hud-card">'
             '<div class="hover-popup">'
@@ -1473,11 +1490,11 @@ elif page == "⚡ Actuation Protocol (VRI)":
             '<div class="popup-caption">Controls how wide and how long water valves open so not a single drop is wasted.</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">⚡ PWM Solenoid Duty</div>'
+            '<div class="hud-card-label">⚡ Valve Opening</div>'
             f'<div class="hud-card-value">{res["duty_cycle"]}%</div>'
-            f'<div class="card-explainer">Valve pulse frequency; delivers target water depth of {res["app_depth_mm"]} mm.</div>'
+            f'<div class="card-explainer">How wide the water valve opens; gives {res["app_depth_mm"]} mm of water.</div>'
             '</div>'
-            f'<div class="hud-pill pill-amber">Target Depth: {res["app_depth_mm"]} mm</div>'
+            f'<div class="hud-pill pill-amber">Water Needed: {res["app_depth_mm"]} mm</div>'
             '</div>'
             '<div class="hud-card">'
             '<div class="hover-popup">'
@@ -1490,9 +1507,9 @@ elif page == "⚡ Actuation Protocol (VRI)":
             '<div class="popup-caption">Automatically locks water gates during high winds so wet roots never lose grip.</div>'
             '</div>'
             '<div>'
-            '<div class="hud-card-label">🛡️ Hydraulic Lockout</div>'
+            '<div class="hud-card-label">🛡️ Safety Lock</div>'
             f'<div class="hud-card-value" style="color: {lockout_color};">{lockout_status}</div>'
-            '<div class="card-explainer">Autonomous fail-safe that cuts water when high winds threaten to uproot stalks.</div>'
+            '<div class="card-explainer">Emergency brake that stops water during storms so crops don\'t fall over.</div>'
             '</div>'
             f'<div class="hud-pill {lockout_pill}">{lockout_desc}</div>'
             '</div>'
@@ -1573,7 +1590,7 @@ Satellites: ESA Sentinel-1 C-SAR (10m) | ESA Sentinel-2 MSI | ECMWF ERA5-Land Re
 - Atmospheric Wind Vector     : {res['mean_wind_kmh']:.1f} km/h (ECMWF 10m Reanalysis)
 - Lodging Risk Index Score    : {res['mean_lodging']:.2f}
 - Structural Vulnerability    : {res['lodging_label']}
-- Agronomic Directive         : {"Halt all canal irrigation and nitrogen application. Clear drainage channels to prevent stalk toppling." if res['lodging_label'] == "HIGH RISK" else "Stalk elasticity and root anchorage are structurally sound under current atmospheric load."}
+- Agronomic Directive         : {"Halt all canal irrigation and nitrogen application. Clear drainage channels to prevent stalk toppling." if res['lodging_label'] == "High Risk" else "Stalk elasticity and root anchorage are structurally sound under current atmospheric load."}
 
 --------------------------------------------------------------------------------
 4. AUTONOMOUS ACTUATION TELEMETRY (ISOBUS ISO 11783-10)
