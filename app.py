@@ -874,14 +874,15 @@ elif page == "🗺️ Radar Analysis Canvas":
         col_gps, col_search, col_crop, col_radius = st.columns([1.25, 1.6, 1.2, 1.15])
 
         with col_gps:
-            st.markdown("**📡 Ground GPS (Locate Me)**")
             gps_html = """
-            <div style="text-align: center;">
+            <div style="text-align: center; padding-top: 2px;">
+                <div style="font-size: 0.875rem; font-weight: 600; color: #1E3F20; text-align: left; margin-bottom: 7px; line-height: 1.25;">📡 Ground GPS (Locate Me)</div>
                 <button onclick="getLocation()" style="
                     background: linear-gradient(135deg, #1E3F20, #4A3728);
                     border: 1.5px solid #D99B26;
                     color: #FFFFFF;
-                    padding: 9px 12px;
+                    height: 38px;
+                    padding: 0 12px;
                     font-weight: 700;
                     border-radius: 8px;
                     cursor: pointer;
@@ -889,7 +890,7 @@ elif page == "🗺️ Radar Analysis Canvas":
                     font-size: 0.85rem;
                     box-shadow: 0 3px 8px rgba(30, 63, 32, 0.20);
                 ">🎯 Ping Live Field GPS</button>
-                <p id="status" style="color: #1E3F20; font-size: 0.74rem; margin-top: 6px; font-weight: 600;"></p>
+                <p id="status" style="color: #1E3F20; font-size: 0.72rem; margin: 4px 0 0 0; font-weight: 600; line-height: 1.2;"></p>
             </div>
             <script>
             function getLocation() {
@@ -924,7 +925,7 @@ elif page == "🗺️ Radar Analysis Canvas":
             }
             </script>
             """
-            components.html(gps_html, height=80)
+            components.html(gps_html, height=78)
 
         with col_search:
             default_box_val = (
@@ -1643,6 +1644,7 @@ elif page == "👥 Project Innovators & Mentor":
         unsafe_allow_html=True
     )
 
+    mentor_avatar = get_member_avatar_html("sir.jpeg", "Prof. Subhrangshu Das")
     ansh_avatar = get_member_avatar_html("ansh.jpeg", "Ansh Verma")
     bishal_avatar = get_member_avatar_html("bishal.jpeg", "Bishal Dutta")
     arghya_avatar = get_member_avatar_html("arghya.jpeg", "Arghya Paramanik")
@@ -1652,6 +1654,7 @@ elif page == "👥 Project Innovators & Mentor":
     mentor_html = (
         '<div class="hud-card" style="border-color: #1E3F20; min-height: 92px; margin-bottom: 18px;">'
         '<div class="profile-popup">'
+        f'{mentor_avatar}'
         '<div class="profile-badge">🎓 Project Mentor</div>'
         '<div class="profile-row"><strong>Name:</strong> Prof. Subhrangshu Das</div>'
         '<div class="profile-row"><strong>Designation:</strong> Associate Professor & Project Supervisor</div>'
